@@ -127,9 +127,11 @@ print(f"IP-Adresse: {wlan.ifconfig()[0]}")
 
 pb_client = MQTTClient(pb_client_id, pb_broker_ip, pb_port, pb_user, pb_password)
 try:
-    print("Verbinden zum Client")
+    print("Verbindungstest zum MQTT-Client")
     pb_client.connect()
-    print("Verbunden zum Client")
+    time.sleep(0.5)
+    pb_client.disconnect()
+    print("Verbindungstest erfolgreich")
 except Exception as e:
     print("Fehler bei der MQTT-Verbindung:", e)
 
@@ -147,5 +149,7 @@ while True:
     json_daten = json.dumps(daten)
 
      # Sende JSON-Daten an den Broker
+    pb_client.connect()
     pb_client.publish(pb_topic, json_daten)
+    pb_client.disconnect()
     print("Daten versendet:", daten)
