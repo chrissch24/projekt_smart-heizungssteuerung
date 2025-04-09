@@ -6,6 +6,9 @@
 #=====Bibliotheken=====#
 from machine import Pin, PWM, SoftI2C
 import time
+import json
+import network
+from umqtt.simple import MQTTClient
 from aht10 import AHT10  # Temperatur- und Luftfeuchtigkeitssensor
 import CCS811 # Luftqualitätssensor
 #======================#
@@ -30,10 +33,26 @@ raumtemp = []
 raumluft = []
 co2_list = []
 tvoc_list = []
+
+ir_keys = { 0x1a: "Aus",
+            0x04: "1kW",
+            0x06: "2kW",
+            0x0a: "3kW"} # Addresse 0080
 #=============================#
 
 #=====Einstellungen=====#
 messloops = 10  # Anzahl der durchgeführten Messungen bei einem Messzyklus
+# WLAN-Daten
+ssid = "FRITZ!Box 7590 BC"
+password = "97792656499411616203"
+
+#MQTT-Publish
+pb_client_id = "mqttx_b1dee7e5"
+pb_broker_ip = "192.168.178.56"
+pb_port = 1883
+pb_user = "ChSch"
+pb_password = "12345678"
+pb_topic = "Raum/Sensorwerte"
 #=======================#
 
 #=====Funktionen=====#
@@ -88,6 +107,34 @@ def messungccs811():
 
 #====================#
 
+#=====Einmalige Einrichtungen=====#
+
+# WLAN-Verbindung herstellen
+wlan = network.WLAN(network.STA_IF)
+wlan.active(True)  
+wlan.connect(ssid, password)  
+print(f"Verbinde mit {ssid}...")
+    
+while not wlan.isconnected():
+    time.sleep(1)
+    print("Verbindungsversuch läuft...")
+    
+# Erfolgreich verbunden
+print(f"Verbunden mit {ssid}")
+print(f"IP-Adresse: {wlan.ifconfig()[0]}") 
+
+# MQTT-Client einrichten und verbinden
+
+pb_client = MQTTClient(pb_client_id, pb_broker_ip, pb_port, pb_user, pb_password)
+try:
+    print("Verbinden zum Client")
+    pb_client.connect()
+    print("Verbunden zum Client")
+except Exception as e:
+    print("Fehler bei der MQTT-Verbindung:", e)
+
+#=================================#
+
 #=====Hauptschleife=====#
 while True:
     # Temperatur und Luftfeuchtigkeit messen
@@ -95,7 +142,10 @@ while True:
 
     if sensorccs811.data_ready():
         messungccs811()
+    #Sensordaten in JSON-Fomart schreiben
+    daten = {"Temperatur": raumtemperatur, "Luftfeuchtigkeit": luftfeuchtigkeit, "CO2-Wert": co2_wert, "TVOC-Wert": tvoc_wert}
+    json_daten = json.dumps(daten)
 
-    # Ausgabe der gemessenen Werte
-    print(f"Temperatur: {raumtemperatur}°C, Luftfeuchtigkeit: {luftfeuchtigkeit}%, CO2-Wert: {co2_wert}ppm, TVOC-Wert: {tvoc_wert}ppb")
-
+     # Sende JSON-Daten an den Broker
+    pb_client.publish(pb_topic, json_daten)
+    print("Daten versendet:", daten)
