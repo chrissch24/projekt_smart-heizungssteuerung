@@ -11,6 +11,7 @@ import network
 from umqtt.simple import MQTTClient
 from aht10 import AHT10  # Temperatur- und Luftfeuchtigkeitssensor
 import CCS811 # Luftqualitätssensor
+from ir_tx.nec import NEC # IR-Transmitter
 #======================#
 
 #=====Pins definieren=====#
@@ -20,11 +21,15 @@ i2c = SoftI2C(scl=Pin(1), sda=Pin(2))
 # ACS712-Stromsensor
 strom_sensor = ADC(Pin(4))
 strom_sensor.atten(ADC.ATTN_11DB)  # 0-3.3V Bereich
+
+# IR-Transmitter
+ir_tx = NEC(Pin(5, Pin.OUT))
 #=========================#
 
 #=====Sensor Objekte definieren=====#
 sensoraht10 = AHT10(i2c)
 sensorccs811 = CCS811.CCS811(i2c=i2c, addr=90)
+
 #===================================#
 
 #=====Variabeln festlegen=====#
@@ -42,7 +47,9 @@ momt_leistung = 0
 ges_leistung = 0
 neu_strahlersteuerung = 0
 alt_strahlersteuerung = 0
+strahlerfeedback = 0
 ir_code = 0x1a
+frostschutzfeedback = 0
 #=============================#
 
 #=====Einstellungen=====#
@@ -57,7 +64,6 @@ pb_broker_ip = "192.168.178.56" #Änderung bei Netzwerkänderung
 pb_port = 1883
 pb_user = "ChSch"
 pb_password = "12345678"
-pb_topic = "Raum/Sensorwerte"
 
 # MQTT-Daten Subscribe
 subscribe_MQTT_CLIENT_ID = "mqttx_b1dee8e6"
@@ -135,6 +141,7 @@ def messungccs811():
 
 #-------------------------------------------#
 def messungacs712():
+    """Messung des Stroms des Heizstrahlers und Umrechnung in Watt """
     global momt_leistung, ges_leistung
     try:
         strom_list.clear()
@@ -168,6 +175,7 @@ def messungacs712():
         momt_leistung = "Fehler"
 #-------------------------------------------#
 def callback_strahler(topic, msg):
+    """Abrufen der Steuerungsdaten für den Heizstrahler """
     global neu_strahlersteuerung, alt_strahlersteuerung, ir_code
     try:
         #Aus der MQTT-Nachricht den Werte für "Strahler" extrahieren
@@ -182,9 +190,48 @@ def callback_strahler(topic, msg):
         
     # Nur ein IR-Code Änderung wenn es eine Änderung gibt
     if neu_strahlersteuerung != alt_strahlersteuerung:
+        # IR-Code aus den Dictionary ziehen
         ir_code = ir_keys.get(neu_strahlersteuerung)
         alt_strahlersteuerung = neu_strahlersteuerung
+        # Funktion zur Steuerung des Strahler aufrufen
+        steuerung_strahler()
+
+#-------------------------------------------#
+def steuerung_strahler():
+    """Senden der IR Daten an den Heizstrahler """
+    global strahlerfeedback
+    # Stufe 1
+    # Kann immer eingeschaltet werden
+    if neu_strahlersteuerung == 1:
+        ir_tx.transmit(ir_adresse, ir_code)
+        strahlerfeedback = 1
         
+    # Stufe 2
+    # Kann nur Bedingt eingeschaltet werden, wenn er auf Stufe 1 oder 3 ist.
+    elif neu_strahlersteuerung == 2 and strahlerfeedback in [1, 3]:
+        ir_tx.transmit(ir_adresse, ir_code)
+        strahlerfeedback = 2
+    
+    # Stufe 3
+    # Kann nur eingeschlatet werden wenn er in Stufe 2 ist.
+    elif neu_strahlersteuerung == 3 and strahlerfeedback == 2:
+        ir_tx.transmit(ir_adresse, ir_code)
+        strahlerfeedback = 3
+        
+    else:
+        ir_tx.transmit(ir_adresse, ir_code)
+        strahlerfeedback = 0
+#-------------------------------------------#
+def frostschutz():
+    """ Funktion zum Frostschutz des Raumes"""
+    ir_tx.transmit(ir_adresse, ir_keys.get(1)) # Strahler wird auf Stufe 1 geschaltet
+    time.sleep(5) # 5 Sekunden Wartezeit um große Einschaltströme zu verhindern
+    
+    ir_tx.transmit(ir_adresse, ir_keys.get(2)) # Strahler wird auf Stufe 2 geschaltet
+    time.sleep(5) # 5 Sekunden Wartezeit um große Einschaltströme zu verhindern
+    
+    ir_tx.transmit(ir_adresse, ir_keys.get(3)) # Strahler wird auf Stufe 3 geschaltet
+    
 #====================#
 
 #=====Einmalige Einrichtungen=====#
@@ -214,15 +261,18 @@ try:
     pb_client.disconnect()
     print("Verbindungstest Publish erfolgreich")
 except Exception as e:
-    print("Fehler bei der MQTT-Verbindung:", e)
+    print("Fehler bei der MQTT-Publish-Verbindung:", e)
 
-# Subscribe Client 
-print("Verbinden zum Subscribe Broker")
-subscribe_client = MQTTClient(subscribe_MQTT_CLIENT_ID, subscribe_MQTT_BROKER_IP)
-subscribe_client.set_callback(callback_strahler)
-subscribe_client.connect()
-subscribe_client.subscribe(subscribe_MQTT_TOPIC)
-print("Erfolgreich Verbunden Subscribe ")
+# Subscribe Client
+try:
+    print("Verbinden zum Subscribe Broker")
+    subscribe_client = MQTTClient(subscribe_MQTT_CLIENT_ID, subscribe_MQTT_BROKER_IP)
+    subscribe_client.set_callback(callback_strahler)
+    subscribe_client.connect()
+    subscribe_client.subscribe(subscribe_MQTT_TOPIC)
+    print("Erfolgreich Verbunden Subscribe ")
+except Exception as e:
+    print("Fehler bei der MQTT-Subscribe-Verbindung:", e)
 #=================================#
 
 #=====Hauptschleife=====#
@@ -238,14 +288,32 @@ while True:
         messungacs712()
         
     #Sensordaten in JSON-Fomart schreiben
-    daten = {"Temperatur": raumtemperatur, "Luftfeuchtigkeit": luftfeuchtigkeit, "CO2-Wert": co2_wert, "TVOC-Wert": tvoc_wert, "Momentane Leistung": momt_leistung, "Gesamte Verbrauchte Leistung": ges_leistung }
-    json_daten = json.dumps(daten)
-
+    sensordaten = {"Temperatur": raumtemperatur, "Luftfeuchtigkeit": luftfeuchtigkeit, "CO2-Wert": co2_wert, "TVOC-Wert": tvoc_wert, "Momentane Leistung": momt_leistung, "Gesamte Verbrauchte Leistung": ges_leistung }
+    json_sensordaten = json.dumps(sensordaten)
+    
+    #Feedback vom Strahler in JSON-Fomart schreiben
+    feedbackdaten = {"Strahlerfeedback": strahlerfeedback, "Frostschutzfeedback": frostschutzfeedback}
+    json_feedbackdaten = json.dumps(feedbackdaten)
+    
      # Sende JSON-Daten an den Broker
     pb_client.connect()
-    pb_client.publish(pb_topic, json_daten)
+    pb_client.publish("Raum/Sensorwerte", json_sensordaten)
+    print("Sensordaten versendet:", json_sensordaten)
+    pb_client.publish("Raum/Feedback",json_feedbackdaten)
+    print("Feedbackdaten versendet:", json_feedbackdaten)
     pb_client.disconnect()
-    print("Daten versendet:", daten)
+    
     
     # Nach neuen Nachrichten Abfragen
     subscribe_client.check_msg()
+    
+    # Frostschutz Funktion
+    if raumtemperatur < 5 and strahlerfeedback == 0:
+        frostschutz()
+        strahlerfeedback = 3
+        frostschutzfeedback = 1
+    elif raumtemperatur > 7 and frostschutzfeedback == 1:
+        ir_tx.transmit(ir_adresse, ir_keys.get(0))
+        strahlerfeedback = 0
+        frostschutzfeedback = 0
+        

@@ -1,11 +1,8 @@
 from machine import Pin
-from ir_tx.nec import NEC           # Senderklasse
-from ir_rx.nec import NEC_16        # Empfängerklasse
-import time
+from ir_tx.nec import NEC     # Empfängerklasse
 
-def callback(data, addr, ctrl):
-    if data > 0:
-        print("Data {:02x} Addr {:04x}".format(data, addr))
+ir_tx = NEC(Pin(4, Pin.OUT))
 
-ir = NEC_16(Pin(4, Pin.IN), callback)
-
+print("Senden Starten")
+ir_tx.transmit(1,2)
+print("Sendung abgeschlossen")
