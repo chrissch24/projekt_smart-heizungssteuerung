@@ -19,8 +19,8 @@ from ir_tx.nec import NEC # IR-Transmitter
 i2c = SoftI2C(scl=Pin(1), sda=Pin(2))
 
 # ACS712-Stromsensor
-strom_sensor = ADC(Pin(4))
-strom_sensor.atten(ADC.ATTN_11DB)  # 0-3.3V Bereich
+#strom_sensor = ADC(Pin(4))
+#strom_sensor.atten(ADC.ATTN_11DB)  # 0-3.3V Bereich
 
 # IR-Transmitter
 ir_tx = NEC(Pin(5, Pin.OUT))
@@ -93,7 +93,7 @@ def messfilter(messwerte):
     messwerte.pop(0)  # Kleinster Wert entfernen
     messwerte.pop()   # Größter Wert entfernen
     messwerte = round(sum(messwerte) / len(messwerte), 2)
-    return messwerte
+    return int(messwerte)
 
 #-------------------------------------------#
 # Messung der Temperatur und Luftfeuchtigkeit
@@ -148,7 +148,9 @@ def messungacs712():
         
         # Messwerte auslesen
         for i in range(messloops):
-            strom_list.append(strom_sensor.read())
+            #strom_list.append(strom_sensor.read())
+            strom_list.append(4000)
+            
 
         # Mittelwertfilter anwenden
         mess_strom = messfilter(strom_list)
@@ -165,12 +167,12 @@ def messungacs712():
 
     if strom_A != "Fehler":
         # Momentanleistung berechnen
-        momt_leistung = round(messpannung * strom_A, 2)
+        momt_leistung = messpannung * strom_A
+        momt_leistung = int(momt_leistung)
 
         # Gesamtleistung aufsummieren
-        ges_leistung += momt_leistung
+        ges_leistung = momt_leistung / 1000 + ges_leistung 
         ges_leistung = round(ges_leistung, 2)
-
     else:
         momt_leistung = "Fehler"
 #-------------------------------------------#
@@ -218,7 +220,7 @@ def steuerung_strahler():
         ir_tx.transmit(ir_adresse, ir_code)
         strahlerfeedback = 3
         
-    else:
+    elif neu_strahlersteuerung not in [1, 2, 3]:
         ir_tx.transmit(ir_adresse, ir_code)
         strahlerfeedback = 0
 #-------------------------------------------#
@@ -288,7 +290,7 @@ while True:
         messungacs712()
         
     #Sensordaten in JSON-Fomart schreiben
-    sensordaten = {"Temperatur": raumtemperatur, "Luftfeuchtigkeit": luftfeuchtigkeit, "CO2-Wert": co2_wert, "TVOC-Wert": tvoc_wert, "Momentane Leistung": momt_leistung, "Gesamte Verbrauchte Leistung": ges_leistung }
+    sensordaten = {"Temperatur": raumtemperatur, "Luftfeuchtigkeit": luftfeuchtigkeit, "CO2_Wert": co2_wert, "TVOC_Wert": tvoc_wert, "Momentane_Leistung": momt_leistung, "Gesamte_Leistung": ges_leistung }
     json_sensordaten = json.dumps(sensordaten)
     
     #Feedback vom Strahler in JSON-Fomart schreiben
@@ -298,9 +300,9 @@ while True:
      # Sende JSON-Daten an den Broker
     pb_client.connect()
     pb_client.publish("Raum/Sensorwerte", json_sensordaten)
-    print("Sensordaten versendet:", json_sensordaten)
+    #print("Sensordaten versendet:", json_sensordaten)
     pb_client.publish("Raum/Feedback",json_feedbackdaten)
-    print("Feedbackdaten versendet:", json_feedbackdaten)
+    #print("Feedbackdaten versendet:", json_feedbackdaten)
     pb_client.disconnect()
     
     
