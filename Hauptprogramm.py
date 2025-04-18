@@ -40,32 +40,41 @@ strom_list = []
 messpannung = 230
 momt_leistung = 0
 ges_leistung = 0
-
-ir_keys = { 0x1a: "Aus",
-            0x04: "1kW",
-            0x06: "2kW",
-            0x0a: "3kW"} # Addresse 0080
-
-
+neu_strahlersteuerung = 0
+alt_strahlersteuerung = 0
+ir_code = 0x1a
 #=============================#
 
 #=====Einstellungen=====#
 messloops = 10  # Anzahl der durchgeführten Messungen bei einem Messzyklus
 # WLAN-Daten
-ssid = "FRITZ!Box 7590 BC"
-password = "97792656499411616203"
+ssid = "FRITZ!Box 7590 BC" #Änderung bei Netzwerkänderung
+password = "97792656499411616203" #Änderung bei Netzwerkänderung
 
 #MQTT-Publish
 pb_client_id = "mqttx_b1dee7e5"
-pb_broker_ip = "192.168.178.56"
+pb_broker_ip = "192.168.178.56" #Änderung bei Netzwerkänderung
 pb_port = 1883
 pb_user = "ChSch"
 pb_password = "12345678"
 pb_topic = "Raum/Sensorwerte"
 
+# MQTT-Daten Subscribe
+subscribe_MQTT_CLIENT_ID = "mqttx_b1dee8e6"
+subscribe_MQTT_BROKER_IP = pb_broker_ip
+subscribe_MQTT_TOPIC = "Heizstrahler/Steuerung"
+
 # Kalibrierwerte Stromsensor
 mV_per_A = 100  #100mV pro 1A aus
 ACS_offset = 2500  #Spannung bei 0A (in mV)
+
+#IR-Daten
+ir_keys = { 0: 0x1a, # Aus
+            1: 0x04, # 1kW
+            2: 0x06, # 2kW
+            3: 0x0a} # 3kW
+
+ir_adresse = 0080
 #=======================#
 
 #=====Funktionen=====#
@@ -124,6 +133,7 @@ def messungccs811():
         co2_wert = "Fehler"
         tvoc_wert = "Fehler"
 
+#-------------------------------------------#
 def messungacs712():
     global momt_leistung, ges_leistung
     try:
@@ -156,8 +166,25 @@ def messungacs712():
 
     else:
         momt_leistung = "Fehler"
-
+#-------------------------------------------#
+def callback_strahler(topic, msg):
+    global neu_strahlersteuerung, alt_strahlersteuerung, ir_code
+    try:
+        #Aus der MQTT-Nachricht den Werte für "Strahler" extrahieren
+        sub_daten = json.loads(msg)
+        neu_strahlersteuerung = sub_daten.get("Strahler")
     
+    except Exception as e:
+        # Bei einen Fehler immer 0.
+        # 0 Entspricht Heizstrahler Aus
+        print("Fehler beim Auslesen der Subscribe Daten")
+        neu_strahlersteuerung = 0
+        
+    # Nur ein IR-Code Änderung wenn es eine Änderung gibt
+    if neu_strahlersteuerung != alt_strahlersteuerung:
+        ir_code = ir_keys.get(neu_strahlersteuerung)
+        alt_strahlersteuerung = neu_strahlersteuerung
+        
 #====================#
 
 #=====Einmalige Einrichtungen=====#
@@ -178,25 +205,38 @@ print(f"IP-Adresse: {wlan.ifconfig()[0]}")
 
 # MQTT-Client einrichten und verbinden
 
+# Publish Client
 pb_client = MQTTClient(pb_client_id, pb_broker_ip, pb_port, pb_user, pb_password)
 try:
-    print("Verbindungstest zum MQTT-Client")
+    print("Verbindungstest zum MQTT-Publish-Client")
     pb_client.connect()
     time.sleep(0.5)
     pb_client.disconnect()
-    print("Verbindungstest erfolgreich")
+    print("Verbindungstest Publish erfolgreich")
 except Exception as e:
     print("Fehler bei der MQTT-Verbindung:", e)
 
+# Subscribe Client 
+print("Verbinden zum Subscribe Broker")
+subscribe_client = MQTTClient(subscribe_MQTT_CLIENT_ID, subscribe_MQTT_BROKER_IP)
+subscribe_client.set_callback(callback_strahler)
+subscribe_client.connect()
+subscribe_client.subscribe(subscribe_MQTT_TOPIC)
+print("Erfolgreich Verbunden Subscribe ")
 #=================================#
 
 #=====Hauptschleife=====#
 while True:
     # Temperatur und Luftfeuchtigkeit messen
     messungaht10()
-
+    
+    # Luftqualität messen wenn der Sensor bereit ist
     if sensorccs811.data_ready():
         messungccs811()
+    # Leistung messen sobald der Heizstrahler eingeschaltet ist    
+    if neu_strahlersteuerung in [1, 2, 3]:
+        messungacs712()
+        
     #Sensordaten in JSON-Fomart schreiben
     daten = {"Temperatur": raumtemperatur, "Luftfeuchtigkeit": luftfeuchtigkeit, "CO2-Wert": co2_wert, "TVOC-Wert": tvoc_wert, "Momentane Leistung": momt_leistung, "Gesamte Verbrauchte Leistung": ges_leistung }
     json_daten = json.dumps(daten)
@@ -206,3 +246,6 @@ while True:
     pb_client.publish(pb_topic, json_daten)
     pb_client.disconnect()
     print("Daten versendet:", daten)
+    
+    # Nach neuen Nachrichten Abfragen
+    subscribe_client.check_msg()
