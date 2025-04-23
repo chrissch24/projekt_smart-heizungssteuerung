@@ -92,22 +92,29 @@ ir_code = 0x1a
 frostschutzfeedback = 0
 mqttpb_verbunden = False
 mqttsb_verbunden = False
+messdaten_neu = False
 #=============================#
 
 #=====Einstellungen=====#
 messloops = 10  # Anzahl der durchgeführten Messungen bei einem Messzyklus
 
-#Einstellung für den Frostschutz
+# Einstellung für den Frostschutz
 frostschutzschwellwert = 5 #Wert wenn er aktiviert wird
 frostschutzaus = 7 #Wert wenn er wieder ausgeschaltet wird
+
+# Messzeit Einstellung
+mess_now = 0
+mess_last = 0
+mess_intervall = 30000 # in ms, entspricht 30s
+
 # WLAN-Daten
-ssid = "BZTG-IoT" #Änderung bei Netzwerkänderung
-password = "WerderBremen24" #Änderung bei Netzwerkänderung
+ssid = "FRITZ!Box 7590 BC" #Änderung bei Netzwerkänderung
+password = "97792656499411616203" #Änderung bei Netzwerkänderung
 max_versuche = 10 #Wie viel fehlgeschlagene Versuche soll es geben bis er abbricht
 
 #MQTT-Publish
 pb_client_id = "mqttx_b1dee7e5"
-pb_broker_ip = "192.168.1.148" #Änderung bei Netzwerkänderung
+pb_broker_ip = "192.168.178.56" #Änderung bei Netzwerkänderung
 pb_port = 1883
 pb_user = "ChSch"
 pb_password = "12345678"
@@ -220,6 +227,7 @@ def messungacs712():
         # Gesamtleistung aufsummieren
         ges_leistung = momt_leistung / 1000 + ges_leistung 
         ges_leistung = round(ges_leistung, 2)
+        
     else:
         momt_leistung = "Fehler"
 #-------------------------------------------#
@@ -229,6 +237,7 @@ def callback_strahler(topic, msg):
     try:
         #Aus der MQTT-Nachricht den Werte für "Strahler" extrahieren
         sub_daten = json.loads(msg)
+        print(f"Empfange Daten {sub_daten}")
         neu_strahlersteuerung = sub_daten.get("Strahler")
     
     except Exception as e:
@@ -378,22 +387,42 @@ if wlan.isconnected() and mqttpb_verbunden and mqttsb_verbunden:
     txt.text(font, "Frostschutzschwellwert: ", 30, 178, st7789.CYAN, st7789.BLACK)
 
 while True:
-    # Temperatur und Luftfeuchtigkeit messen
-    messungaht10()
+    mess_now = time.ticks_ms()
     
-    # Luftqualität messen wenn der Sensor bereit ist
-    try:
-        if sensorccs811.data_ready():
+    # Alle 30 Sekunden wird eine Messung durchgeführt
+    if time.ticks_diff(mess_now, mess_last) >= mess_intervall:
+        mess_last = mess_now
+        
+        # Temperatur und Luftfeuchtigkeit messen
+        print("Messung")
+        messdaten_neu = True
+        messungaht10()
+    
+        # Luftqualität messen wenn der Sensor bereit ist
+        try:
+            if sensorccs811.data_ready():
+                
+                # Wird nur ausgeführt wenn beide Varibalen vom AHT10 ein Integer sind. Ist es ein String liegt ein Fehler vor
+                if isinstance(raumtemperatur, int) and isinstance(luftfeuchtigkeit, int):
+                    
+                    # Umweltdaten einspeisen um Messwerte zu verbessern.
+                    sensorccs811.put_envdata(luftfeuchtigkeit, raumtemperatur)
+                
             messungccs811()
-    except Exception as e:
-        print("Fehler beim Lesen des CCS811-Sensors:", e)
-        co2_wert = "Fehler"
-        tvoc_wert = "Fehler"
+            print("Messung beendet")
+        except Exception as e:
+            print("Fehler beim Lesen des CCS811-Sensors:", e)
+            co2_wert = "Fehler"
+            tvoc_wert = "Fehler"
     
     
     # Leistung messen sobald der Heizstrahler eingeschaltet ist    
     if neu_strahlersteuerung in [1, 2, 3]:
         messungacs712()
+    
+    # Wenn der Heizstrahler ist ausgeschaltet wird der Wert auf 0 gesetzt
+    elif strahlerfeedback == 0:
+        momt_leistung = 0
         
     #Sensordaten in JSON-Fomart schreiben
     sensordaten = {
@@ -418,22 +447,49 @@ while True:
     json_feedbackdaten = json.dumps(feedbackdaten)
     
      # Sende JSON-Daten an den Broker
-    if wlan.isconnected() and mqttpb_verbunden:
-        pb_client.connect()
-        pb_client.publish("Raum/Sensorwerte", json_sensordaten)
+    try:
+        if wlan.isconnected() and mqttpb_verbunden:
+            pb_client.connect()
+            if messdaten_neu:
+                messdaten_neu = False
+                # Es werden Daten gesendet, wenn die Messungen abrufen wurden
+                pb_client.publish("Raum/Sensorwerte", json_sensordaten)
+                print("Verschickte Sensordaten", json_sensordaten)
         
-        # print("Sensordaten versendet:", json_sensordaten)
-        pb_client.publish("Raum/Feedback",json_feedbackdaten)
-        
-        # print("Feedbackdaten versendet:", json_feedbackdaten)
-        pb_client.disconnect()
+            # print("Sensordaten versendet:", json_sensordaten)
+            pb_client.publish("Raum/Feedback",json_feedbackdaten)
+         
+            # print("Feedbackdaten versendet:", json_feedbackdaten)
+            pb_client.disconnect()
+            
+    except Exception as e:
+        print("Fehler bei der MQTT-Publish-Verbindung:", e)
+        txt.fill(st7789.BLACK)
+        txt.text(font, "Fehler beim Verbinden mit", 60, 132, st7789.CYAN, st7789.BLACK)
+        txt.text(font, "MQTT-Broker-Publish", 85, 155, st7789.CYAN, st7789.BLACK)
+        break
       
     # Nach neuen Nachrichten Abfragen
     if wlan.isconnected() and mqttsb_verbunden:
-        subscribe_client.check_msg()
+        try:
+            subscribe_client.ping()
+        except Exception as e:
+            print("Subscribe Client ist nicht verbunden", e)
+            
+        try:
+            subscribe_client.check_msg()
+        
+        except Exception as e:
+            print("Fehler bei der MQTT-Subscribe-Verbindung:", e)
+            txt.fill(st7789.BLACK)
+            txt.text(font, "Fehler beim Verbinden mit", 60, 132, st7789.CYAN, st7789.BLACK)
+            txt.text(font, "MQTT-Broker-Subsribe", 85, 155, st7789.CYAN, st7789.BLACK)
+            break
     
     # Frostschutz Funktion
+    # Frost wird nur ausgeführt wenn es ein Integer ist. Sollte es ein String sein hat der Sensor ein Fehler
     if isinstance(raumtemperatur, int):
+        
         if raumtemperatur < frostschutzschwellwert  and strahlerfeedback == 0:
             frostschutz()
             strahlerfeedback = 3
@@ -474,3 +530,4 @@ while True:
         txt.fill_rect(217, 178, 100, 15, st7789.BLACK)
         txt.text(font, "5 °C", 217, 178, st7789.CYAN, st7789.BLACK)
         
+    

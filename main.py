@@ -1,55 +1,533 @@
-# *---------------------------------------------*
-# | PZEM (v3.0)                                 |
-# |                                             |
-# | Micropython driver to communicate with      |
-# | PZEM-004T (v0.3) using Modbus-RTU protocol  |
-# | on the hardware UART port                   |
-# |                                             |
-# | Authors: Jacopo Rodeschini                  |
-# | License: GPLv3                              |
-# *---------------------------------------------*
+#Projekt: Smart Heizungssteuerung
+#Ersteller: Ch. Scheele
+#Erstellungsdatum: 25.03.2025
+#Letzte Änderung:
 
-# PZEM is free software: you can redistribute it and/or modify
-# it under the terms of the GNU General Public License as published by
-# the Free Software Foundation, either version 2 of the License, or
-# (at your option) any later version.
-#
-# PZEM is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with PZEM. If not, see <http://www.gnu.org/licenses/>.
-
-# main.py file
-
-from pzem import PZEM
-import machine
+#=====Bibliotheken=====#
+from machine import Pin, PWM, SoftI2C, SoftSPI
 import time
+import json
+import network
+from umqtt.simple import MQTTClient
+from aht10 import AHT10  # Temperatur- und Luftfeuchtigkeitssensor
+import CCS811 # Luftqualitätssensor
+from ir_tx.nec import NEC # IR-Transmitter
+import st7789py as st7789 #Bildschirm-Bibliothek
+import vga1_8x16 as font #Bildschirm Font
+#======================#
 
-# define 60 sec spleeping time [msec.]
-sleep = 60 * 1000 
+#=====Bildschirm-Infos=====#
+#ESP32-S3
+#Bildschirm Belegung
+#ST7789V3
+#SCK = Pin 42
+#MOSI = Pin 41
+#MISO = Pin 0
+#Reset = Pin 40
+#CS = Pin 39
+#dc = Pin 38
+#==========================#
 
-# define hardware uart
-uart = machine.UART(2, baudrate=9600)
+#=====Pins definieren=====#
+# I2C-Pins definieren:
+i2c = SoftI2C(scl=Pin(1), sda=Pin(2))
 
-# define PZEM device [UART, ADDR = 0xF8 (default)]
-dev = PZEM(uart=uart)
+# ACS712-Stromsensor
+#strom_sensor = ADC(Pin(4))
+#strom_sensor.atten(ADC.ATTN_11DB)  # 0-3.3V Bereich
 
-# Set new address
-if dev.setAddress(0x05):
-    print("New device address is {}".format(dev.getAddress()))
+# IR-Transmitter
+ir_tx = NEC(Pin(5, Pin.OUT))
 
+#SPI-Schnittstelle
+spi = SoftSPI(
+        baudrate = 2000000,
+        polarity = 1,
+        phase = 0,
+        sck = Pin(42),
+        mosi = Pin(41),
+        miso = Pin(0))
+#=========================#
+
+#=====Sensor Objekte definieren=====#
+#AHT10 definieren
+sensoraht10 = AHT10(i2c)
+
+#CCS811 definieren
+sensorccs811 = CCS811.CCS811(i2c=i2c, addr=90)
+
+#Bildschirm ST7789 definieren
+txt = st7789.ST7789(
+        spi,
+        240,
+        320,
+        reset = Pin(40, Pin.OUT),
+        cs = Pin(39, Pin.OUT),
+        dc = Pin(38, Pin.OUT),
+        backlight = Pin(0, Pin.OUT),
+        rotation = 1)
+
+#Bildschirm auf Schwarz setzen
+txt.fill(st7789.BLACK)
+txt.text(font, "Boot Vorgang gestartet", 72, 109, st7789.CYAN, st7789.BLACK)
+#===================================#
+
+#=====Variabeln festlegen=====#
+raumtemperatur = 0
+luftfeuchtigkeit = 0
+co2_wert = 0
+tvoc_wert = 0
+raumtemp = []
+raumluft = []
+co2_list = []
+tvoc_list = []
+strom_list = []
+messpannung = 230
+momt_leistung = 0
+ges_leistung = 0
+neu_strahlersteuerung = 0
+alt_strahlersteuerung = 0
+strahlerfeedback = 0
+ir_code = 0x1a
+frostschutzfeedback = 0
+mqttpb_verbunden = False
+mqttsb_verbunden = False
+messdaten_neu = False
+#=============================#
+
+#=====Einstellungen=====#
+messloops = 10  # Anzahl der durchgeführten Messungen bei einem Messzyklus
+
+# Einstellung für den Frostschutz
+frostschutzschwellwert = 5 #Wert wenn er aktiviert wird
+frostschutzaus = 7 #Wert wenn er wieder ausgeschaltet wird
+
+# Messzeit Einstellung
+mess_now = 0
+mess_last = 0
+mess_intervall = 30000 # in ms, entspricht 30s
+
+# WLAN-Daten
+ssid = "FRITZ!Box 7590 BC" #Änderung bei Netzwerkänderung
+password = "97792656499411616203" #Änderung bei Netzwerkänderung
+max_versuche = 10 #Wie viel fehlgeschlagene Versuche soll es geben bis er abbricht
+
+#MQTT-Publish
+pb_client_id = "mqttx_b1dee7e5"
+pb_broker_ip = "192.168.178.56" #Änderung bei Netzwerkänderung
+pb_port = 1883
+pb_user = "ChSch"
+pb_password = "12345678"
+
+# MQTT-Daten Subscribe
+subscribe_MQTT_CLIENT_ID = "mqttx_b1dee8e6"
+subscribe_MQTT_BROKER_IP = pb_broker_ip
+subscribe_MQTT_TOPIC = "Heizstrahler/Steuerung"
+
+# Kalibrierwerte Stromsensor
+mV_per_A = 100  #100mV pro 1A aus
+ACS_offset = 2500  #Spannung bei 0A (in mV)
+
+#IR-Daten
+ir_keys = { 0: 0x1a, # Aus
+            1: 0x04, # 1kW
+            2: 0x06, # 2kW
+            3: 0x0a} # 3kW
+
+ir_adresse = 0080
+#=======================#
+
+#=====Funktionen=====#
+def messfilter(messwerte):
+    """Filtern von Messwerten, um Ausreißer zu entfernen"""
+    if len(messwerte) < 3:  # Sicherheit, um Fehler zu vermeiden
+        return sum(messwerte) / len(messwerte) if messwerte else 0
+    
+    messwerte.sort()  # Werte sortieren
+    messwerte.pop(0)  # Kleinster Wert entfernen
+    messwerte.pop()   # Größter Wert entfernen
+    messwerte = round(sum(messwerte) / len(messwerte), 2)
+    return int(messwerte)
+
+#-------------------------------------------#
+# Messung der Temperatur und Luftfeuchtigkeit
+def messungaht10():
+    """Messung der Temperatur und Luftfeuchtigkeit"""
+    global raumtemperatur, luftfeuchtigkeit
+    try:
+        raumtemp.clear()
+        raumluft.clear()
+        #Messwerte auslesen
+        for i in range(messloops):
+            raumtemp.append(sensoraht10.temperature())
+            raumluft.append(sensoraht10.humidity())
+            
+        # Mittelwertfilter anwenden
+        raumtemperatur = messfilter(raumtemp)
+        luftfeuchtigkeit = messfilter(raumluft)
+        
+    except Exception as e:
+        print("Fehler beim Lesen des AHT10-Sensors:", e)
+        raumtemperatur = "Fehler"
+        luftfeuchtigkeit = "Fehler"
+
+#-------------------------------------------#
+# Messung der Luftqualität
+def messungccs811():
+    """Messung Luftqualität"""
+    global co2_wert, tvoc_wert
+    try:
+        co2_list.clear()
+        tvoc_list.clear()
+        # Messwerte auslesen
+        for i in range(messloops):
+            co2_list.append(sensorccs811.eCO2)
+            tvoc_list.append(sensorccs811.tVOC)
+            
+        # Mittelwertfilter anwenden
+        co2_wert = messfilter(co2_list)
+        tvoc_wert = messfilter(tvoc_list)
+    
+    except Exception as e:
+        print("Fehler beim Lesen des CCS811-Sensors:", e)
+        co2_wert = "Fehler"
+        tvoc_wert = "Fehler"
+
+#-------------------------------------------#
+def messungacs712():
+    """Messung des Stroms des Heizstrahlers und Umrechnung in Watt """
+    global momt_leistung, ges_leistung
+    try:
+        strom_list.clear()
+        
+        # Messwerte auslesen
+        for i in range(messloops):
+            #strom_list.append(strom_sensor.read())
+            strom_list.append(4000)
+            
+
+        # Mittelwertfilter anwenden
+        mess_strom = messfilter(strom_list)
+
+        # ADC-Wert in Millivolt umrechnen
+        strom_in_mv = (mess_strom / 4095.0) * 3300
+
+        # Umrechnung von mV in Ampere unter Berücksichtigung des Offset
+        strom_A = (strom_in_mv - ACS_offset) / mV_per_A
+
+    except Exception as e:
+        print("Fehler beim Lesen des ACS712-Sensors:", e)
+        strom_A = "Fehler"
+
+    if strom_A != "Fehler":
+        # Momentanleistung berechnen
+        momt_leistung = messpannung * strom_A
+        momt_leistung = int(momt_leistung)
+
+        # Gesamtleistung aufsummieren
+        ges_leistung = momt_leistung / 1000 + ges_leistung 
+        ges_leistung = round(ges_leistung, 2)
+        
+    else:
+        momt_leistung = "Fehler"
+#-------------------------------------------#
+def callback_strahler(topic, msg):
+    """Abrufen der Steuerungsdaten für den Heizstrahler """
+    global neu_strahlersteuerung, alt_strahlersteuerung, ir_code
+    try:
+        #Aus der MQTT-Nachricht den Werte für "Strahler" extrahieren
+        sub_daten = json.loads(msg)
+        print(f"Empfange Daten {sub_daten}")
+        neu_strahlersteuerung = sub_daten.get("Strahler")
+    
+    except Exception as e:
+        # Bei einen Fehler immer 0.
+        # 0 Entspricht Heizstrahler Aus
+        print("Fehler beim Auslesen der Subscribe Daten")
+        neu_strahlersteuerung = 0
+        
+    # Nur ein IR-Code Änderung wenn es eine Änderung gibt
+    if neu_strahlersteuerung != alt_strahlersteuerung:
+        # IR-Code aus den Dictionary ziehen
+        ir_code = ir_keys.get(neu_strahlersteuerung)
+        alt_strahlersteuerung = neu_strahlersteuerung
+        # Funktion zur Steuerung des Strahler aufrufen
+        steuerung_strahler()
+
+#-------------------------------------------#
+def steuerung_strahler():
+    """Senden der IR Daten an den Heizstrahler """
+    global strahlerfeedback
+    # Stufe 1
+    # Kann immer eingeschaltet werden
+    if neu_strahlersteuerung == 1:
+        ir_tx.transmit(ir_adresse, ir_code)
+        strahlerfeedback = 1
+        
+    # Stufe 2
+    # Kann nur Bedingt eingeschaltet werden, wenn er auf Stufe 1 oder 3 ist.
+    elif neu_strahlersteuerung == 2 and strahlerfeedback in [1, 3]:
+        ir_tx.transmit(ir_adresse, ir_code)
+        strahlerfeedback = 2
+    
+    # Stufe 3
+    # Kann nur eingeschlatet werden wenn er in Stufe 2 ist.
+    elif neu_strahlersteuerung == 3 and strahlerfeedback == 2:
+        ir_tx.transmit(ir_adresse, ir_code)
+        strahlerfeedback = 3
+        
+    elif neu_strahlersteuerung not in [1, 2, 3]:
+        ir_tx.transmit(ir_adresse, ir_code)
+        strahlerfeedback = 0
+#-------------------------------------------#
+def frostschutz():
+    """ Funktion zum Frostschutz des Raumes"""
+    ir_tx.transmit(ir_adresse, ir_keys.get(1)) # Strahler wird auf Stufe 1 geschaltet
+    time.sleep(5) # 5 Sekunden Wartezeit um große Einschaltströme zu verhindern
+    
+    ir_tx.transmit(ir_adresse, ir_keys.get(2)) # Strahler wird auf Stufe 2 geschaltet
+    time.sleep(5) # 5 Sekunden Wartezeit um große Einschaltströme zu verhindern
+    
+    ir_tx.transmit(ir_adresse, ir_keys.get(3)) # Strahler wird auf Stufe 3 geschaltet
+    
+#====================#
+
+#=====Einmalige Einrichtungen=====#
+
+# WLAN-Verbindung herstellen
+wlan = network.WLAN(network.STA_IF)
+wlan.active(True)
+    
+if not wlan.isconnected():
+    print(f"Verbinde mit {ssid}...")
+    wlan.connect(ssid, password)
+
+    versuche = 0
+    while not wlan.isconnected() and versuche < max_versuche:
+        try:
+            time.sleep(1)
+            versuche += 1
+            print(f"Verbindungsversuch {versuche}/{max_versuche}...")
+        except Exception as e:
+            print("Fehler beim Verbindungsversuch:", e)
+            txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
+            txt.text(font, "Boot Vorgang abgebrochen", 72, 109, st7789.CYAN, st7789.BLACK)
+            txt.text(font, "Fehler beim Verbindungsversuch", 45, 132, st7789.CYAN, st7789.BLACK)
+            txt.text(font, "mit den Wlan Netzwerk", 80, 155, st7789.CYAN, st7789.BLACK)
+
+# Erfolgreich verbunden
+if wlan.isconnected():
+    print("WLAN verbunden!")
+    print("Netzwerk-Konfiguration:", wlan.ifconfig())
+
+else:
+    print("Verbindung fehlgeschlagen nach mehreren Versuchen.")
+    txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
+    txt.text(font, "Boot Vorgang abgebrochen", 72, 109, st7789.CYAN, st7789.BLACK)
+    txt.text(font, "Verbindung Wlan fehlgeschlagen", 50, 132, st7789.CYAN, st7789.BLACK)
+    txt.text(font, "Zu viele Versuche", 90, 155, st7789.CYAN, st7789.BLACK)
+
+# MQTT-Client einrichten und verbinden
+
+# Publish Client
+if wlan.isconnected():
+    pb_client = MQTTClient(pb_client_id, pb_broker_ip, pb_port, pb_user, pb_password)
+    try:
+        print("Verbindungstest zum MQTT-Publish-Client")
+        pb_client.connect()
+        time.sleep(0.5)
+        pb_client.disconnect()
+        mqttpb_verbunden = True
+        print("Verbindungstest Publish erfolgreich")
+    except Exception as e:
+        print("Fehler bei der MQTT-Publish-Verbindung:", e)
+        txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
+        txt.text(font, "Boot Vorgang abgebrochen", 72, 109, st7789.CYAN, st7789.BLACK)
+        txt.text(font, "Fehler beim Verbinden mit", 60, 132, st7789.CYAN, st7789.BLACK)
+        txt.text(font, "MQTT-Broker-Publish", 85, 155, st7789.CYAN, st7789.BLACK)
+
+# Subscribe Client
+if wlan.isconnected():
+    try:
+        print("Verbinden zum Subscribe Broker")
+        subscribe_client = MQTTClient(subscribe_MQTT_CLIENT_ID, subscribe_MQTT_BROKER_IP)
+        subscribe_client.set_callback(callback_strahler)
+        subscribe_client.connect()
+        subscribe_client.subscribe(subscribe_MQTT_TOPIC)
+        mqttsb_verbunden = True
+        print("Erfolgreich Verbunden Subscribe ")
+    except Exception as e:
+        print("Fehler bei der MQTT-Subscribe-Verbindung:", e)
+        txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
+        txt.text(font, "Boot Vorgang abgebrochen", 72, 109, st7789.CYAN, st7789.BLACK)
+        txt.text(font, "Fehler beim Verbinden mit", 60, 132, st7789.CYAN, st7789.BLACK)
+        
+        # Falls beim MQTT-Publish bereits ein Fehler ist, wird die Nachricht darunter eingefügt
+        if mqttpb_verbunden == True:
+            txt.text(font, "MQTT-Broker-Subscribe", 80, 155, st7789.CYAN, st7789.BLACK)
+            
+        else:
+            txt.text(font, "MQTT-Broker-Subscribe", 80, 178, st7789.CYAN, st7789.BLACK)
+#=================================#
+
+#=====Hauptschleife=====#
+if wlan.isconnected() and mqttpb_verbunden and mqttsb_verbunden:
+    txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
+    txt.text(font, "Boot Vorgang erfolgreich", 72, 109, st7789.CYAN, st7789.BLACK)
+    time.sleep(2)
+    txt.fill_rect(72, 109, 195, 15, st7789.BLACK)
+
+#Bildschirm Texte einfügen
+    txt.text(font, "Temperatur: ", 30, 40, st7789.CYAN, st7789.BLACK)
+    txt.text(font, "Luftfeuchtigkeit: ", 30, 63, st7789.CYAN, st7789.BLACK)
+    txt.text(font, "CO2-Wert: ", 30, 86, st7789.CYAN, st7789.BLACK)
+    txt.text(font, "TVOC-Wert: ", 30, 109, st7789.CYAN, st7789.BLACK)
+    txt.text(font, "Aktuelle Leistung: ", 30, 132, st7789.CYAN, st7789.BLACK)
+    txt.text(font, "Gesamte Leistung: ", 30, 155, st7789.CYAN, st7789.BLACK)
+    txt.text(font, "Frostschutzschwellwert: ", 30, 178, st7789.CYAN, st7789.BLACK)
 
 while True:
-
-    # Read the new values
-    if dev.read():
-
-        # print the reading value (public filed)
-        print(dev.toString())
-        print(dev.getCurrent())
-
-    # wait for the next reading
-    time.sleep_ms(sleep - dev.getReadingTime())
+    mess_now = time.ticks_ms()
+    
+    # Alle 30 Sekunden wird eine Messung durchgeführt
+    if time.ticks_diff(mess_now, mess_last) >= mess_intervall:
+        mess_last = mess_now
+        
+        # Temperatur und Luftfeuchtigkeit messen
+        print("Messung")
+        messdaten_neu = True
+        messungaht10()
+    
+        # Luftqualität messen wenn der Sensor bereit ist
+        try:
+            if sensorccs811.data_ready():
+                
+                # Wird nur ausgeführt wenn beide Varibalen vom AHT10 ein Integer sind. Ist es ein String liegt ein Fehler vor
+                if isinstance(raumtemperatur, int) and isinstance(luftfeuchtigkeit, int):
+                    
+                    # Umweltdaten einspeisen um Messwerte zu verbessern.
+                    sensorccs811.put_envdata(luftfeuchtigkeit, raumtemperatur)
+                
+            messungccs811()
+            print("Messung beendet")
+        except Exception as e:
+            print("Fehler beim Lesen des CCS811-Sensors:", e)
+            co2_wert = "Fehler"
+            tvoc_wert = "Fehler"
+    
+    
+    # Leistung messen sobald der Heizstrahler eingeschaltet ist    
+    if neu_strahlersteuerung in [1, 2, 3]:
+        messungacs712()
+    
+    # Wenn der Heizstrahler ist ausgeschaltet wird der Wert auf 0 gesetzt
+    elif strahlerfeedback == 0:
+        momt_leistung = 0
+        
+    #Sensordaten in JSON-Fomart schreiben
+    sensordaten = {
+        "Temperatur": raumtemperatur,
+        "Luftfeuchtigkeit": luftfeuchtigkeit,
+        "CO2_Wert": co2_wert,
+        "TVOC_Wert": tvoc_wert,
+        "Momentane_Leistung": momt_leistung,
+        "Gesamte_Leistung": ges_leistung
+        }
+    
+    json_sensordaten = json.dumps(sensordaten)
+    
+    #Feedback vom Strahler in JSON-Fomart schreiben
+    feedbackdaten = {
+        "Strahlerfeedback": strahlerfeedback,
+        "Frostschutzfeedback": frostschutzfeedback,
+        "Frostschutzschwellwert": frostschutzschwellwert,
+        "FrostschutzAus": frostschutzaus
+        }
+    
+    json_feedbackdaten = json.dumps(feedbackdaten)
+    
+     # Sende JSON-Daten an den Broker
+    try:
+        if wlan.isconnected() and mqttpb_verbunden:
+            pb_client.connect()
+            if messdaten_neu:
+                messdaten_neu = False
+                # Es werden Daten gesendet, wenn die Messungen abrufen wurden
+                pb_client.publish("Raum/Sensorwerte", json_sensordaten)
+                print("Verschickte Sensordaten", json_sensordaten)
+        
+            # print("Sensordaten versendet:", json_sensordaten)
+            pb_client.publish("Raum/Feedback",json_feedbackdaten)
+         
+            # print("Feedbackdaten versendet:", json_feedbackdaten)
+            pb_client.disconnect()
+            
+    except Exception as e:
+        print("Fehler bei der MQTT-Publish-Verbindung:", e)
+        txt.fill(st7789.BLACK)
+        txt.text(font, "Fehler beim Verbinden mit", 60, 132, st7789.CYAN, st7789.BLACK)
+        txt.text(font, "MQTT-Broker-Publish", 85, 155, st7789.CYAN, st7789.BLACK)
+        break
+      
+    # Nach neuen Nachrichten Abfragen
+    if wlan.isconnected() and mqttsb_verbunden:
+        try:
+            subscribe_client.ping()
+        except Exception as e:
+            print("Subscribe Client ist nicht verbunden", e)
+            
+        try:
+            subscribe_client.check_msg()
+        
+        except Exception as e:
+            print("Fehler bei der MQTT-Subscribe-Verbindung:", e)
+            txt.fill(st7789.BLACK)
+            txt.text(font, "Fehler beim Verbinden mit", 60, 132, st7789.CYAN, st7789.BLACK)
+            txt.text(font, "MQTT-Broker-Subsribe", 85, 155, st7789.CYAN, st7789.BLACK)
+            break
+    
+    # Frostschutz Funktion
+    # Frost wird nur ausgeführt wenn es ein Integer ist. Sollte es ein String sein hat der Sensor ein Fehler
+    if isinstance(raumtemperatur, int):
+        
+        if raumtemperatur < frostschutzschwellwert  and strahlerfeedback == 0:
+            frostschutz()
+            strahlerfeedback = 3
+            frostschutzfeedback = 1
+            
+        elif raumtemperatur > frostschutzaus and frostschutzfeedback == 1:
+            ir_tx.transmit(ir_adresse, ir_keys.get(0))
+            strahlerfeedback = 0
+            frostschutzfeedback = 0
+        
+    #Sensorwerte auf den Bildschirm anzeigen lassen
+    if wlan.isconnected() and mqttpb_verbunden and mqttsb_verbunden:
+        # Temperatur
+        txt.fill_rect(120, 40, 100, 15, st7789.BLACK)
+        txt.text(font, f"{raumtemperatur} °C", 120, 40, st7789.CYAN, st7789.BLACK)
+    
+        # Luftfeuchtigkeit
+        txt.fill_rect(168, 63, 100, 15, st7789.BLACK)
+        txt.text(font, f"{luftfeuchtigkeit} %", 168, 63, st7789.CYAN, st7789.BLACK)
+    
+        # CO2-Wert
+        txt.fill_rect(103, 86, 100, 15, st7789.BLACK)
+        txt.text(font, f"{co2_wert} ppm", 103, 86, st7789.CYAN, st7789.BLACK)
+    
+        # TVOC-Wert
+        txt.fill_rect(112, 109, 100, 15, st7789.BLACK)
+        txt.text(font, f"{tvoc_wert} ppb", 112, 109, st7789.CYAN, st7789.BLACK)
+    
+        # Momentane Leistung
+        txt.fill_rect(175, 132, 100, 15, st7789.BLACK)
+        txt.text(font, f"{momt_leistung} W", 175, 132, st7789.CYAN, st7789.BLACK)
+    
+        # Gesamte Leistung
+        txt.fill_rect(167, 155, 100, 15, st7789.BLACK)
+        txt.text(font, f"{ges_leistung} kW", 167, 155, st7789.CYAN, st7789.BLACK)
+    
+        # Frostschutzschwellwert
+        txt.fill_rect(217, 178, 100, 15, st7789.BLACK)
+        txt.text(font, "5 °C", 217, 178, st7789.CYAN, st7789.BLACK)
+        
+    
