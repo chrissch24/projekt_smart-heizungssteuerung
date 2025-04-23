@@ -70,6 +70,7 @@ txt = st7789.ST7789(
 #Bildschirm auf Schwarz setzen
 txt.fill(st7789.BLACK)
 txt.text(font, "Boot Vorgang gestartet", 72, 109, st7789.CYAN, st7789.BLACK)
+bootvorgang = True
 #===================================#
 
 #=====Variabeln festlegen=====#
@@ -289,7 +290,120 @@ def frostschutz():
     time.sleep(5) # 5 Sekunden Wartezeit um große Einschaltströme zu verhindern
     
     ir_tx.transmit(ir_adresse, ir_keys.get(3)) # Strahler wird auf Stufe 3 geschaltet
+
+#-------------------------------------------#
+def wifi_verbindung():
+    """ Funktion um sich mit den Wlan Netzwerk zu Verbinden.
+    Abbruch, sobald die maximal gesetzte Anzahl an Versuchen überschritten ist. """
     
+    # Wenn bereits verbunden, abbrechen
+    if wlan.isconnected():
+        return
+    
+    # Verbindung mit WLAN herstellen
+    print(f"Verbinde mit {ssid}...")
+    wlan.connect(ssid, password) 
+    versuche = 0
+    
+    # Versuche, so lange mit WLAN zu verbinden, bis entweder eine Verbindung hergestellt wird oder die maximale Anzahl an Versuchen erreicht ist
+    while not wlan.isconnected() and versuche < max_versuche:
+        try:
+            time.sleep(1)
+            versuche += 1
+                
+            print(f"Verbindungsversuch {versuche}/{max_versuche}...")
+        except Exception as e:
+            # Fehlerbehandlung im Falle eines Fehlers bei der Verbindung
+            print("Fehler beim Verbindungsversuch:", e)
+            
+                
+            # Anzeige eines Fehlertexts beim Bootvorgang
+            if bootvorgang:
+                txt.text(font, "Boot Vorgang abgebrochen", 72, 109, st7789.CYAN, st7789.BLACK)
+            # Anzeige des Fehlertexts
+            txt.text(font, "Fehler beim Verbindungsversuch", 45, 132, st7789.CYAN, st7789.BLACK)
+            txt.text(font, "mit den Wlan Netzwerk", 80, 155, st7789.CYAN, st7789.BLACK)
+            
+            return 
+
+    # Wenn Wlan verbunden ist wird die Netzwerkonfiguration ausgegeben
+    if wlan.isconnected():
+        print("WLAN verbunden!")
+        print("Netzwerk-Konfiguration:", wlan.ifconfig())
+
+    else:
+        # Wenn die Verbindung nicht erfolgreich war, Fehlernachricht anzeigen
+        print("Verbindung fehlgeschlagen nach mehreren Versuchen.")
+        # Anzeige des Fehlertexts
+        txt.fill(st7789.BLACK)
+        
+        # Anzeige eines Fehlertexts beim Bootvorgang
+        if bootvorgang:
+            txt.text(font, "Boot Vorgang abgebrochen", 72, 109, st7789.CYAN, st7789.BLACK)
+            
+         # Anzeige des Fehlertexts
+        txt.text(font, "Verbindung Wlan fehlgeschlagen", 50, 132, st7789.CYAN, st7789.BLACK)
+        txt.text(font, "Zu viele Versuche", 90, 155, st7789.CYAN, st7789.BLACK)
+#-------------------------------------------#
+def publish_daten():
+    """ Funktion um die Daten zu plublishen"""
+    global messdaten_neu
+    
+    # Wenn neue Messdaten vorhanden sind, sende die Sensorwerte
+    if messdaten_neu:
+        pb_client.publish("Raum/Sensorwerte", json_sensordaten)
+        print("Verschickte Sensordaten", json_sensordaten)
+        messdaten_neu = False
+        
+    # Senden der Feedbackdaten an den Broker
+    pb_client.publish("Raum/Feedback",json_feedbackdaten)
+    print("Feedbackdaten versendet:", json_feedbackdaten)
+
+def publish_verbinden():
+    """Funktion zum Verbinden mit dem MQTT-Broker und Senden der Daten.
+    Bei einem Verbindungsfehler wird der WLAN-Status überprüft und bei Bedarf neu verbunden."""
+
+    try:
+        # Verbindung zum Broker herstellen, Daten versenden und Verbindung trennen
+        pb_client.connect()
+        publish_daten() 
+        pb_client.disconnect()
+            
+    except OSError as e:
+        # Fehlerbehandlung bei Netzwerk Probleme
+        print("Netzwerkfehler bei MQTT-Publish", e)
+        
+        # Überprüfen des genauen Netzwerkfehlers und ggf. WLAN-Verbindung neu herstellen
+        if e.args[0] in [104, 113, 128]:
+            print("Möglicherweise WLan getrennt - versuche neu zu verbinden")
+            wifi_verbindung()
+            
+            # Erneuter versuchen, die Daten zu senden
+    
+            try:
+                # Verbindung zum Broker herstellen, Daten versenden und Verbindung trennen
+                pb_client.connect()
+                publish_daten() 
+                pb_client.disconnect()
+                
+            except Exception as e2:
+                # Fehlerbehandlung, falls auch nach WLAN-Reconnect der MQTT-Publish fehlschlägt
+                print("MQTT-Publish Fehler nach Reconnect:", e2)
+                
+                # Anzeige des Fehlertexts
+                txt.fill(st7789.BLACK)
+                txt.text(font, "Fehler beim Reconnect mit", 60, 132, st7789.CYAN, st7789.BLACK)
+                txt.text(font, "MQTT-Broker-Publish", 85, 155, st7789.CYAN, st7789.BLACK)
+        
+        else:
+            # Fehler, wenn der Fehlercode unbekannt ist
+            print("Unbekannter Fehler:", e)
+            
+            # # Anzeige des Fehlertexts
+            txt.fill(st7789.BLACK)
+            txt.text(font, "Fehler Unbekannt", 60, 132, st7789.CYAN, st7789.BLACK)
+            txt.text(font, "MQTT-Broker-Publish", 85, 155, st7789.CYAN, st7789.BLACK)
+
 #====================#
 
 #=====Einmalige Einrichtungen=====#
@@ -297,41 +411,14 @@ def frostschutz():
 # WLAN-Verbindung herstellen
 wlan = network.WLAN(network.STA_IF)
 wlan.active(True)
-    
-if not wlan.isconnected():
-    print(f"Verbinde mit {ssid}...")
-    wlan.connect(ssid, password)
-
-    versuche = 0
-    while not wlan.isconnected() and versuche < max_versuche:
-        try:
-            time.sleep(1)
-            versuche += 1
-            print(f"Verbindungsversuch {versuche}/{max_versuche}...")
-        except Exception as e:
-            print("Fehler beim Verbindungsversuch:", e)
-            txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
-            txt.text(font, "Boot Vorgang abgebrochen", 72, 109, st7789.CYAN, st7789.BLACK)
-            txt.text(font, "Fehler beim Verbindungsversuch", 45, 132, st7789.CYAN, st7789.BLACK)
-            txt.text(font, "mit den Wlan Netzwerk", 80, 155, st7789.CYAN, st7789.BLACK)
-
-# Erfolgreich verbunden
-if wlan.isconnected():
-    print("WLAN verbunden!")
-    print("Netzwerk-Konfiguration:", wlan.ifconfig())
-
-else:
-    print("Verbindung fehlgeschlagen nach mehreren Versuchen.")
-    txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
-    txt.text(font, "Boot Vorgang abgebrochen", 72, 109, st7789.CYAN, st7789.BLACK)
-    txt.text(font, "Verbindung Wlan fehlgeschlagen", 50, 132, st7789.CYAN, st7789.BLACK)
-    txt.text(font, "Zu viele Versuche", 90, 155, st7789.CYAN, st7789.BLACK)
+wifi_verbindung()
 
 # MQTT-Client einrichten und verbinden
 
 # Publish Client
 if wlan.isconnected():
     pb_client = MQTTClient(pb_client_id, pb_broker_ip, pb_port, pb_user, pb_password)
+    # Test Verbindung zum Client
     try:
         print("Verbindungstest zum MQTT-Publish-Client")
         pb_client.connect()
@@ -339,6 +426,7 @@ if wlan.isconnected():
         pb_client.disconnect()
         mqttpb_verbunden = True
         print("Verbindungstest Publish erfolgreich")
+        
     except Exception as e:
         print("Fehler bei der MQTT-Publish-Verbindung:", e)
         txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
@@ -374,6 +462,7 @@ if wlan.isconnected():
 if wlan.isconnected() and mqttpb_verbunden and mqttsb_verbunden:
     txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
     txt.text(font, "Boot Vorgang erfolgreich", 72, 109, st7789.CYAN, st7789.BLACK)
+    bootvorgang = False
     time.sleep(2)
     txt.fill_rect(72, 109, 195, 15, st7789.BLACK)
 
@@ -447,27 +536,8 @@ while True:
     json_feedbackdaten = json.dumps(feedbackdaten)
     
      # Sende JSON-Daten an den Broker
-    try:
-        if wlan.isconnected() and mqttpb_verbunden:
-            pb_client.connect()
-            if messdaten_neu:
-                messdaten_neu = False
-                # Es werden Daten gesendet, wenn die Messungen abrufen wurden
-                pb_client.publish("Raum/Sensorwerte", json_sensordaten)
-                print("Verschickte Sensordaten", json_sensordaten)
-        
-            # print("Sensordaten versendet:", json_sensordaten)
-            pb_client.publish("Raum/Feedback",json_feedbackdaten)
-         
-            # print("Feedbackdaten versendet:", json_feedbackdaten)
-            pb_client.disconnect()
-            
-    except Exception as e:
-        print("Fehler bei der MQTT-Publish-Verbindung:", e)
-        txt.fill(st7789.BLACK)
-        txt.text(font, "Fehler beim Verbinden mit", 60, 132, st7789.CYAN, st7789.BLACK)
-        txt.text(font, "MQTT-Broker-Publish", 85, 155, st7789.CYAN, st7789.BLACK)
-        break
+     publish_verbinden()
+  
       
     # Nach neuen Nachrichten Abfragen
     if wlan.isconnected() and mqttsb_verbunden:
