@@ -344,65 +344,39 @@ def wifi_verbindung():
          # Anzeige des Fehlertexts
         txt.text(font, "Verbindung Wlan fehlgeschlagen", 50, 132, st7789.CYAN, st7789.BLACK)
         txt.text(font, "Zu viele Versuche", 90, 155, st7789.CYAN, st7789.BLACK)
-#-------------------------------------------#
-def publish_daten():
-    """ Funktion um die Daten zu plublishen"""
-    global messdaten_neu
-    
-    # Wenn neue Messdaten vorhanden sind, sende die Sensorwerte
-    if messdaten_neu:
-        pb_client.publish("Raum/Sensorwerte", json_sensordaten)
-        print("Verschickte Sensordaten", json_sensordaten)
-        messdaten_neu = False
-        
-    # Senden der Feedbackdaten an den Broker
-    pb_client.publish("Raum/Feedback",json_feedbackdaten)
-    print("Feedbackdaten versendet:", json_feedbackdaten)
+#-------------------------------------------#)
 
-def publish_verbinden():
-    """Funktion zum Verbinden mit dem MQTT-Broker und Senden der Daten.
-    Bei einem Verbindungsfehler wird der WLAN-Status überprüft und bei Bedarf neu verbunden."""
+def publish_senden():
+    """Funktion zum Verbinden mit dem MQTT-Broker und Senden der Daten."""
+    global messdaten_neu
 
     try:
-        # Verbindung zum Broker herstellen, Daten versenden und Verbindung trennen
-        pb_client.connect()
-        publish_daten() 
-        pb_client.disconnect()
-            
-    except OSError as e:
-        # Fehlerbehandlung bei Netzwerk Probleme
-        print("Netzwerkfehler bei MQTT-Publish", e)
-        
-        # Überprüfen des genauen Netzwerkfehlers und ggf. WLAN-Verbindung neu herstellen
-        if e.args[0] in [104, 113, 128]:
-            print("Möglicherweise WLan getrennt - versuche neu zu verbinden")
+        # Sollte die Wlan Verbindung verloren sein, wird sie wieder hergestellt
+        if not wlan.isconnected():
             wifi_verbindung()
             
-            # Erneuter versuchen, die Daten zu senden
-    
-            try:
-                # Verbindung zum Broker herstellen, Daten versenden und Verbindung trennen
-                pb_client.connect()
-                publish_daten() 
-                pb_client.disconnect()
-                
-            except Exception as e2:
-                # Fehlerbehandlung, falls auch nach WLAN-Reconnect der MQTT-Publish fehlschlägt
-                print("MQTT-Publish Fehler nach Reconnect:", e2)
-                
-                # Anzeige des Fehlertexts
-                txt.fill(st7789.BLACK)
-                txt.text(font, "Fehler beim Reconnect mit", 60, 132, st7789.CYAN, st7789.BLACK)
-                txt.text(font, "MQTT-Broker-Publish", 85, 155, st7789.CYAN, st7789.BLACK)
+        # Verbindung zum Broker herstellen, Daten versenden und Verbindung trennen
+        pb_client.connect()
         
-        else:
-            # Fehler, wenn der Fehlercode unbekannt ist
-            print("Unbekannter Fehler:", e)
+        # Wenn neue Messdaten vorhanden sind, sende die Sensorwerte
+        if messdaten_neu:
+            pb_client.publish("Raum/Sensorwerte", json_sensordaten)
+            print("Verschickte Sensordaten", json_sensordaten)
+            messdaten_neu = False
+        
+        # Senden der Feedbackdaten an den Broker
+        pb_client.publish("Raum/Feedback",json_feedbackdaten)
+        print("Feedbackdaten versendet:", json_feedbackdaten)
+
+        pb_client.disconnect()
             
-            # # Anzeige des Fehlertexts
-            txt.fill(st7789.BLACK)
-            txt.text(font, "Fehler Unbekannt", 60, 132, st7789.CYAN, st7789.BLACK)
-            txt.text(font, "MQTT-Broker-Publish", 85, 155, st7789.CYAN, st7789.BLACK)
+    except Exception as e:
+        # Fehlerbehandlung bei Netzwerk Probleme
+        print("Fehler bei MQTT-Publish", e)
+        txt.fill(st7789.BLACK)
+        txt.text(font, "Fehler bei der Verbindung mit", 60, 132, st7789.CYAN, st7789.BLACK)
+        txt.text(font, "MQTT-Broker-Publish", 85, 155, st7789.CYAN, st7789.BLACK)
+        txt.text(font, f"Fehler {e}", 85, 155, st7789.CYAN, st7789.BLACK)
 
 #====================#
 
@@ -536,7 +510,7 @@ while True:
     json_feedbackdaten = json.dumps(feedbackdaten)
     
      # Sende JSON-Daten an den Broker
-     publish_verbinden()
+     publish_senden()
   
       
     # Nach neuen Nachrichten Abfragen
