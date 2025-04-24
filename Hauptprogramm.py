@@ -1,7 +1,7 @@
 #Projekt: Smart Heizungssteuerung
 #Ersteller: Ch. Scheele
 #Erstellungsdatum: 25.03.2025
-#Letzte Änderung:
+#Letzte Änderung: 24.04.2025
 
 #=====Bibliotheken=====#
 from machine import Pin, PWM, SoftI2C, SoftSPI
@@ -83,17 +83,19 @@ raumluft = []
 co2_list = []
 tvoc_list = []
 strom_list = []
-messpannung = 230
 momt_leistung = 0
 ges_leistung = 0
 neu_strahlersteuerung = 0
 alt_strahlersteuerung = 0
 strahlerfeedback = 0
-ir_code = 0x1a
+ir_code = 0x1a # IR Code grundstellung ist immer auf Aus
 frostschutzfeedback = 0
 mqttpb_verbunden = False
 mqttsb_verbunden = False
-messdaten_neu = False
+feedbackdaten_alt = {}
+feedbackdaten_neu = {}
+sensordaten_alt = {}
+sensordaten_neu = {}
 #=============================#
 
 #=====Einstellungen=====#
@@ -128,7 +130,7 @@ subscribe_MQTT_TOPIC = "Heizstrahler/Steuerung"
 # Kalibrierwerte Stromsensor
 mV_per_A = 100  #100mV pro 1A aus
 ACS_offset = 2500  #Spannung bei 0A (in mV)
-
+messpannung = 230 #Verbrauchspannung liegt bei 230V
 #IR-Daten
 ir_keys = { 0: 0x1a, # Aus
             1: 0x04, # 1kW
@@ -344,39 +346,42 @@ def wifi_verbindung():
          # Anzeige des Fehlertexts
         txt.text(font, "Verbindung Wlan fehlgeschlagen", 50, 132, st7789.CYAN, st7789.BLACK)
         txt.text(font, "Zu viele Versuche", 90, 155, st7789.CYAN, st7789.BLACK)
-#-------------------------------------------#)
+#-------------------------------------------#
 
-def publish_senden():
+def publish_senden(topic, daten):
     """Funktion zum Verbinden mit dem MQTT-Broker und Senden der Daten."""
-    global messdaten_neu
-
+    global mqttpb_verbunden
+    
     try:
         # Sollte die Wlan Verbindung verloren sein, wird sie wieder hergestellt
         if not wlan.isconnected():
+            print("MQTT-Publish-Wlan Verbindung wiederherstellen")
             wifi_verbindung()
             
         # Verbindung zum Broker herstellen, Daten versenden und Verbindung trennen
         pb_client.connect()
+        print("Verbindung MQTT Publish hergestellt")
         
-        # Wenn neue Messdaten vorhanden sind, sende die Sensorwerte
-        if messdaten_neu:
-            pb_client.publish("Raum/Sensorwerte", json_sensordaten)
-            print("Verschickte Sensordaten", json_sensordaten)
-            messdaten_neu = False
-        
-        # Senden der Feedbackdaten an den Broker
-        pb_client.publish("Raum/Feedback",json_feedbackdaten)
-        print("Feedbackdaten versendet:", json_feedbackdaten)
-
+        # Dictionary wird in JSON-Format umgeschrieben
+        json_daten = json.dumps(daten)
+            
+        # Daten werden am Broker gesendet
+        pb_client.publish(topic, json_daten)
+        print("Daten verschickt", json_daten)
+            
+        # Verbindung zum Broker wird abgebrochen
         pb_client.disconnect()
             
     except Exception as e:
-        # Fehlerbehandlung bei Netzwerk Probleme
+        # Anzeige des Fehlertexts
         print("Fehler bei MQTT-Publish", e)
         txt.fill(st7789.BLACK)
         txt.text(font, "Fehler bei der Verbindung mit", 60, 132, st7789.CYAN, st7789.BLACK)
         txt.text(font, "MQTT-Broker-Publish", 85, 155, st7789.CYAN, st7789.BLACK)
-        txt.text(font, f"Fehler {e}", 85, 155, st7789.CYAN, st7789.BLACK)
+        txt.text(font, f"Fehler {e}", 30, 178, st7789.CYAN, st7789.BLACK)
+        
+        # Wird auf False gesetzt um die Schleife zu beenden
+        mqttpb_verbunden = False 
 
 #====================#
 
@@ -402,11 +407,13 @@ if wlan.isconnected():
         print("Verbindungstest Publish erfolgreich")
         
     except Exception as e:
+        # Anzeige des Fehlertexts
         print("Fehler bei der MQTT-Publish-Verbindung:", e)
         txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
         txt.text(font, "Boot Vorgang abgebrochen", 72, 109, st7789.CYAN, st7789.BLACK)
         txt.text(font, "Fehler beim Verbinden mit", 60, 132, st7789.CYAN, st7789.BLACK)
         txt.text(font, "MQTT-Broker-Publish", 85, 155, st7789.CYAN, st7789.BLACK)
+        txt.text(font, f"Fehler {e}", 30, 178, st7789.CYAN, st7789.BLACK)
 
 # Subscribe Client
 if wlan.isconnected():
@@ -419,6 +426,7 @@ if wlan.isconnected():
         mqttsb_verbunden = True
         print("Erfolgreich Verbunden Subscribe ")
     except Exception as e:
+        # Anzeige des Fehlertexts
         print("Fehler bei der MQTT-Subscribe-Verbindung:", e)
         txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
         txt.text(font, "Boot Vorgang abgebrochen", 72, 109, st7789.CYAN, st7789.BLACK)
@@ -427,12 +435,14 @@ if wlan.isconnected():
         # Falls beim MQTT-Publish bereits ein Fehler ist, wird die Nachricht darunter eingefügt
         if mqttpb_verbunden == True:
             txt.text(font, "MQTT-Broker-Subscribe", 80, 155, st7789.CYAN, st7789.BLACK)
+            txt.text(font, f"Fehler {e}", 30, 178, st7789.CYAN, st7789.BLACK)
             
         else:
             txt.text(font, "MQTT-Broker-Subscribe", 80, 178, st7789.CYAN, st7789.BLACK)
+            txt.text(font, f"Fehler {e}", 30, 201, st7789.CYAN, st7789.BLACK)
 #=================================#
 
-#=====Hauptschleife=====#
+# Bildschirmtexte einfügen nach Boot Vorgang
 if wlan.isconnected() and mqttpb_verbunden and mqttsb_verbunden:
     txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
     txt.text(font, "Boot Vorgang erfolgreich", 72, 109, st7789.CYAN, st7789.BLACK)
@@ -440,7 +450,7 @@ if wlan.isconnected() and mqttpb_verbunden and mqttsb_verbunden:
     time.sleep(2)
     txt.fill_rect(72, 109, 195, 15, st7789.BLACK)
 
-#Bildschirm Texte einfügen
+# Bildschirm Texte einfügen
     txt.text(font, "Temperatur: ", 30, 40, st7789.CYAN, st7789.BLACK)
     txt.text(font, "Luftfeuchtigkeit: ", 30, 63, st7789.CYAN, st7789.BLACK)
     txt.text(font, "CO2-Wert: ", 30, 86, st7789.CYAN, st7789.BLACK)
@@ -449,7 +459,9 @@ if wlan.isconnected() and mqttpb_verbunden and mqttsb_verbunden:
     txt.text(font, "Gesamte Leistung: ", 30, 155, st7789.CYAN, st7789.BLACK)
     txt.text(font, "Frostschutzschwellwert: ", 30, 178, st7789.CYAN, st7789.BLACK)
 
-while True:
+#=====Hauptschleife=====#
+while mqttpb_verbunden and mqttsb_verbunden:
+    
     mess_now = time.ticks_ms()
     
     # Alle 30 Sekunden wird eine Messung durchgeführt
@@ -458,7 +470,6 @@ while True:
         
         # Temperatur und Luftfeuchtigkeit messen
         print("Messung")
-        messdaten_neu = True
         messungaht10()
     
         # Luftqualität messen wenn der Sensor bereit ist
@@ -487,51 +498,9 @@ while True:
     elif strahlerfeedback == 0:
         momt_leistung = 0
         
-    #Sensordaten in JSON-Fomart schreiben
-    sensordaten = {
-        "Temperatur": raumtemperatur,
-        "Luftfeuchtigkeit": luftfeuchtigkeit,
-        "CO2_Wert": co2_wert,
-        "TVOC_Wert": tvoc_wert,
-        "Momentane_Leistung": momt_leistung,
-        "Gesamte_Leistung": ges_leistung
-        }
-    
-    json_sensordaten = json.dumps(sensordaten)
-    
-    #Feedback vom Strahler in JSON-Fomart schreiben
-    feedbackdaten = {
-        "Strahlerfeedback": strahlerfeedback,
-        "Frostschutzfeedback": frostschutzfeedback,
-        "Frostschutzschwellwert": frostschutzschwellwert,
-        "FrostschutzAus": frostschutzaus
-        }
-    
-    json_feedbackdaten = json.dumps(feedbackdaten)
-    
-     # Sende JSON-Daten an den Broker
-     publish_senden()
-  
-      
-    # Nach neuen Nachrichten Abfragen
-    if wlan.isconnected() and mqttsb_verbunden:
-        try:
-            subscribe_client.ping()
-        except Exception as e:
-            print("Subscribe Client ist nicht verbunden", e)
-            
-        try:
-            subscribe_client.check_msg()
-        
-        except Exception as e:
-            print("Fehler bei der MQTT-Subscribe-Verbindung:", e)
-            txt.fill(st7789.BLACK)
-            txt.text(font, "Fehler beim Verbinden mit", 60, 132, st7789.CYAN, st7789.BLACK)
-            txt.text(font, "MQTT-Broker-Subsribe", 85, 155, st7789.CYAN, st7789.BLACK)
-            break
-    
     # Frostschutz Funktion
-    # Frost wird nur ausgeführt wenn es ein Integer ist. Sollte es ein String sein hat der Sensor ein Fehler
+    
+    # Frostschutz wird nur ausgeführt wenn es ein Integer ist. Sollte es ein String sein hat der Sensor ein Fehler
     if isinstance(raumtemperatur, int):
         
         if raumtemperatur < frostschutzschwellwert  and strahlerfeedback == 0:
@@ -543,9 +512,30 @@ while True:
             ir_tx.transmit(ir_adresse, ir_keys.get(0))
             strahlerfeedback = 0
             frostschutzfeedback = 0
+            
+    #Sensordaten in JSON-Fomart schreiben
+    sensordaten_neu = {
+        "Temperatur": raumtemperatur,
+        "Luftfeuchtigkeit": luftfeuchtigkeit,
+        "CO2_Wert": co2_wert,
+        "TVOC_Wert": tvoc_wert,
+        "Momentane_Leistung": momt_leistung,
+        "Gesamte_Leistung": ges_leistung
+        }
+    
+    #Feedback vom Strahler in JSON-Fomart schreiben
+    feedbackdaten_neu = {
+        "Strahlerfeedback": strahlerfeedback,
+        "Frostschutzfeedback": frostschutzfeedback,
+        "Frostschutzschwellwert": frostschutzschwellwert,
+        "FrostschutzAus": frostschutzaus
+        }
+
+    # Sensordaten werden nur am Broker und zum Bildschirm gesendet wenn es eine Veränderung gibt
+    if sensordaten_neu != sensordaten_alt and mqttpb_verbunden and mqttsb_verbunden:
+        sensordaten_alt = sensordaten_neu.copy()
+        # Daten werden zum Bildschirm gesendet
         
-    #Sensorwerte auf den Bildschirm anzeigen lassen
-    if wlan.isconnected() and mqttpb_verbunden and mqttsb_verbunden:
         # Temperatur
         txt.fill_rect(120, 40, 100, 15, st7789.BLACK)
         txt.text(font, f"{raumtemperatur} °C", 120, 40, st7789.CYAN, st7789.BLACK)
@@ -569,9 +559,62 @@ while True:
         # Gesamte Leistung
         txt.fill_rect(167, 155, 100, 15, st7789.BLACK)
         txt.text(font, f"{ges_leistung} kW", 167, 155, st7789.CYAN, st7789.BLACK)
-    
+        
+        # Daten werden zum Broker gesendet
+        publish_senden("Raum/Sensorwerte", sensordaten_neu)
+  
+    # Feedbackdaten werden nur am Broker und zum Bildschirm gesendet wenn es eine Veränderung gibt
+    if feedbackdaten_neu != feedbackdaten_alt and mqttpb_verbunden and mqttsb_verbunden:
+        feedbackdaten_alt = feedbackdaten_neu.copy()
+        
+        # Daten werden zum Bildschirm gesendet
+        
         # Frostschutzschwellwert
         txt.fill_rect(217, 178, 100, 15, st7789.BLACK)
         txt.text(font, "5 °C", 217, 178, st7789.CYAN, st7789.BLACK)
         
-    
+        # Daten werden zum Broker gesendet
+        publish_senden("Raum/Feedback", feedbackdaten_neu)
+        
+    # Nach neuen Nachrichten Abfragen
+    if wlan.isconnected() and mqttsb_verbunden:
+        try:
+            subscribe_client.check_msg()
+        
+        except OSError as e:
+            print("Netzwerkfehler beim Subscribe Client")
+            try:
+                # Überprüfen ob eine Verbindung zum Wlan Netzwerkvorhanden ist
+                if not wlan.isconnecte():
+                    print("Versuchen sich wieder mit den Wlan zu verbinden")
+                    wifi_verbindung()
+                
+                # Versuchen sich wieder mit den Broker zu verbinden
+                print("Versuchen sich wieder mit den Subscribe Broker zu verbinden")
+                subscribe_client.connect()
+                subscribe_client.subscribe(subscribe_MQTT_TOPIC)
+                
+                # Nach neuen Nachrichten Abfragen
+                subscribe_client.check_msg()
+            
+            except Exception as e2:
+                print("Unbekannter Netzwerkfehler", e2)
+                
+                # Anzeige des Fehler Textes
+                txt.fill(st7789.BLACK)
+                txt.text(font, "Fehler beim Reconnect mit", 60, 132, st7789.CYAN, st7789.BLACK)
+                txt.text(font, "MQTT-Broker-Subscribe-", 85, 155, st7789.CYAN, st7789.BLACK)
+                txt.text(font, f"Fehler {e2}", 30, 178, st7789.CYAN, st7789.BLACK)
+                
+                mqttsb_verbunden = False
+        
+        except Exception as e:
+            print("Fehler beim Subscribe Client", e)
+            
+            # Anzeige des Fehler Textes
+            txt.fill(st7789.BLACK)
+            txt.text(font, "Fehler beim Verbinden mit", 60, 132, st7789.CYAN, st7789.BLACK)
+            txt.text(font, "MQTT-Broker-Subscribe", 85, 155, st7789.CYAN, st7789.BLACK)
+            txt.text(font, f"Fehler {e}", 30, 178, st7789.CYAN, st7789.BLACK)
+            mqttsb_verbunden = False
+
