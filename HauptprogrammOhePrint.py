@@ -181,7 +181,6 @@ def messungaht10():
         luftfeuchtigkeit = messfilter(raumluft)
         
     except Exception as e:
-        print("Fehler beim Lesen des AHT10-Sensors:", e)
         # Fehlerbehandlung, Texte werden auf den Bildschirm angezeigt
         raumtemperatur = "Fehler"
         luftfeuchtigkeit = "Fehler"
@@ -207,7 +206,6 @@ def messungccs811():
     
     except Exception as e:
         # Fehlerbehandlung, Texte werden auf den Bildschirm angezeigt
-        print("Fehler beim Lesen des CCS811-Sensors:", e)
         co2_wert = "Fehler"
         tvoc_wert = "Fehler"
 
@@ -233,9 +231,10 @@ def messungacs712():
         strom_A = (strom_in_mv - ACS_offset) / mV_per_A
 
     except Exception as e:
-         # Fehlerbehandlung, Texte werden auf den Bildschirm angezeigt
-        print("Fehler beim Lesen des ACS712-Sensors:", e)
+        # Fehlerbehandlung, Texte werden auf den Bildschirm angezeigt
         strom_A = "Fehler"
+         
+        
         
     # Berechnung wird nur ausgeführt falls kein Fehler vorliegt
     if strom_A != "Fehler":
@@ -257,7 +256,6 @@ def callback_strahler(topic, msg):
     try:
         #Aus der MQTT-Nachricht den Werte für "Strahler" extrahieren
         sub_daten = json.loads(msg)
-        print(f"Empfange Daten {sub_daten}")
         
         # Überprüfen, ob der Wert für "Strahler" in den empfangenen Daten vorhanden ist
         # Wenn der Wert existiert und nicht None ist, wird der neue Wert gesetzt
@@ -277,7 +275,6 @@ def callback_strahler(topic, msg):
     except Exception as e:
         # Bei einen Fehler immer 0.
         # 0 Entspricht Heizstrahler Aus
-        print("Fehler beim Auslesen der Subscribe Daten")
         neu_strahlersteuerung = 0
         
     # Nur ein IR-Code Änderung wenn es eine Änderung gibt
@@ -326,7 +323,6 @@ def wifi_verbindung():
         return
     
     # Verbindung mit WLAN herstellen
-    print(f"Verbinde mit {ssid}...")
     wlan.connect(ssid, password) 
     versuche = 0
     
@@ -336,10 +332,8 @@ def wifi_verbindung():
             time.sleep(1)
             versuche += 1
                 
-            print(f"Verbindungsversuch {versuche}/{max_versuche}...")
         except Exception as e:
             # Fehlerbehandlung im Falle eines Fehlers bei der Verbindung
-            print("Fehler beim Verbindungsversuch:", e)
             
             # Anzeige eines Fehlertexts beim Bootvorgang
             if bootvorgang:
@@ -353,12 +347,12 @@ def wifi_verbindung():
 
     # Wenn Wlan verbunden ist, wird die Netzwerkonfiguration ausgegeben
     if wlan.isconnected():
-        print("WLAN verbunden!")
-        print("Netzwerk-Konfiguration:", wlan.ifconfig())
+        pass
+        #print("WLAN verbunden!")
+        #print("Netzwerk-Konfiguration:", wlan.ifconfig())
 
     else:
         # Wenn die Verbindung nicht erfolgreich war, Fehlernachricht anzeigen
-        print("Verbindung fehlgeschlagen nach mehreren Versuchen.")
         # Anzeige des Fehlertexts
         txt.fill(st7789.BLACK)
         
@@ -378,26 +372,22 @@ def publish_senden(topic, daten):
     try:
         # Sollte die Wlan Verbindung verloren sein, wird sie wieder hergestellt
         if not wlan.isconnected():
-            print("MQTT-Publish-Wlan Verbindung wiederherstellen")
             wifi_verbindung()
             
         # Verbindung zum Broker herstellen, Daten versenden und Verbindung trennen
         pb_client.connect()
-        print("Verbindung MQTT Publish hergestellt")
         
         # Dictionary wird in JSON-Format umgeschrieben
         json_daten = json.dumps(daten)
             
         # Daten werden am Broker gesendet
         pb_client.publish(topic, json_daten)
-        print("Daten verschickt", json_daten)
             
         # Verbindung zum Broker wird abgebrochen
         pb_client.disconnect()
             
     except Exception as e:
         # Anzeige des Fehlertexts
-        print("Fehler bei MQTT-Publish", e)
         txt.fill(st7789.BLACK)
         txt.text(font, "Fehler bei der Verbindung mit", 60, 132, st7789.CYAN, st7789.BLACK)
         txt.text(font, "MQTT-Broker-Publish", 85, 155, st7789.CYAN, st7789.BLACK)
@@ -424,17 +414,14 @@ if wlan.isconnected():
     pb_client = MQTTClient(pb_client_id, pb_broker_ip, pb_port, pb_user, pb_password)
     # Test Verbindung zum Client herstellen
     try:
-        print("Verbindungstest zum MQTT-Publish-Client")
         pb_client.connect()
         time.sleep(0.5)
         pb_client.disconnect()
-        print("Verbindungstest Publish erfolgreich")
         
         # Der Wert wird auf True gesetzt, wenn der Test erfolgreich war. Nur bei einem erfolgreichen Test kann die Hauptschleife gestartet werden.
         mqttpb_verbunden = True
         
     except Exception as e:
-        print("Fehler bei der MQTT-Publish-Verbindung:", e)
         
         # Anzeige des Fehlertexts
         txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
@@ -453,7 +440,6 @@ if wlan.isconnected():
         subscribe_client.set_callback(callback_strahler)
         
         # Verbindung zum Subscribe Broker wird hergestellt
-        print("Verbinden zum Subscribe Broker")
         subscribe_client.connect()
         
         # Topics werden abonniert
@@ -464,11 +450,9 @@ if wlan.isconnected():
         # Der Wert wird auf True gesetzt, wenn der Test erfolgreich war. Nur bei einem erfolgreichen Test kann die Hauptschleife gestartet werden.
         mqttsb_verbunden = True
         
-        print("Erfolgreich Verbunden Subscribe ")
         
     except Exception as e:
         # Anzeige des Fehlertexts
-        print("Fehler bei der MQTT-Subscribe-Verbindung:", e)
         txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
         txt.text(font, "Boot Vorgang abgebrochen", 72, 86, st7789.CYAN, st7789.BLACK)
         txt.text(font, "Fehler beim Verbinden mit", 60, 109, st7789.CYAN, st7789.BLACK)
@@ -517,7 +501,6 @@ while mqttpb_verbunden and mqttsb_verbunden:
         mess_umwelt_last = mess_umwelt_now
         
         # Temperatur und Luftfeuchtigkeit messen
-        print("Umwelt-Messung")
         messungaht10()
     
         # Luftqualität messen wenn der Sensor bereit ist
@@ -531,10 +514,8 @@ while mqttpb_verbunden and mqttsb_verbunden:
                     sensorccs811.put_envdata(luftfeuchtigkeit, raumtemperatur)
                 
             messungccs811()
-            print("Umwelt-Messung beendet")
             
         except Exception as e:
-            print("Fehler beim Lesen des CCS811-Sensors:", e)
             # Fehlerbehandlung, Texte werden auf den Bildschirm angezeigt
             co2_wert = "Fehler"
             tvoc_wert = "Fehler" 
@@ -544,11 +525,10 @@ while mqttpb_verbunden and mqttsb_verbunden:
         
         # In einen Takt von 1 Sekunde wird gemessen
         if time.ticks_diff(mess_strom_now, mess_strom_last) >= mess_strom_intervall:
-            print("Strom-Messung gestartet")
+            
             mess_strom_last = mess_strom_now
             # Funktion zur Messung des Stroms und Berechnung der Leistung
             messungacs712()
-            print("Strom-Messung beendet")
     
     # Wenn der Heizstrahler ist ausgeschaltet wird der Wert auf 0 gesetzt
     elif strahlerfeedback == 0:
@@ -557,7 +537,6 @@ while mqttpb_verbunden and mqttsb_verbunden:
     # Frostschutz
     """ Automatisches Ein- und Ausschalten des Heizstrahlers zur Aufrechterhaltung einer konstanten Raumtemperatur """
     
-    # Frostschutz wird nur ausgeführt wenn es ein Integer ist. Sollte es ein String sein hat der Sensor ein Fehler
     # Der Schwellwert muss immer kleiner sein als der Ausschaltwert
     if isinstance(raumtemperatur, int) and frostschutzschwellwert < frostschutzaus:
         
@@ -661,16 +640,14 @@ while mqttpb_verbunden and mqttsb_verbunden:
         
         except OSError as e:
             # Fehlerbehandlung bei Netzwerkfehler
-            print("Netzwerkfehler beim Subscribe Client")
+
             try:
                 # Überprüfen ob eine Verbindung zum Wlan Netzwerkvorhanden ist
                 if not wlan.isconnected():
-                    print("Versuchen sich wieder mit den Wlan zu verbinden")
                     wifi_verbindung()
                 
                 # Versuchen sich wieder mit den Broker zu verbinden
-                print("Versuchen sich wieder mit den Subscribe Broker zu verbinden")
-                
+
                 # Reconntecten und Subscriben
                 subscribe_client.connect()
                 subscribe_client.subscribe(subscribe_MQTT_TOPIC_1) #Topic Steuerung/Stufen
@@ -682,7 +659,6 @@ while mqttpb_verbunden and mqttsb_verbunden:
             
             except Exception as e2:
                 # Fehlernachricht falls das Reconnecten nicht funktioniert
-                print("Unbekannter Netzwerkfehler", e2)
                 
                 # Anzeige des Fehler Textes
                 txt.fill(st7789.BLACK)
@@ -694,8 +670,6 @@ while mqttpb_verbunden and mqttsb_verbunden:
                 mqttsb_verbunden = False
         
         except Exception as e:
-            print("Fehler beim Subscribe Client", e)
-            
             # Anzeige des Fehler Textes
             txt.fill(st7789.BLACK)
             txt.text(font, "Fehler beim Verbinden mit", 60, 132, st7789.CYAN, st7789.BLACK)
@@ -707,3 +681,4 @@ while mqttpb_verbunden and mqttsb_verbunden:
 
 # Bei Beendigung der Schleife wird folgendes auf den Bildschirm angezeigt
 txt.text(font, "Hauptschleife beendet", 80, 40, st7789.CYAN, st7789.BLACK)
+

@@ -88,10 +88,10 @@ ges_leistung = 0
 neu_strahlersteuerung = 0
 alt_strahlersteuerung = 0
 strahlerfeedback = 0
-ir_code = 0x1a # IR Code grundstellung ist immer auf Aus
 frostschutzfeedback = 0
 mqttpb_verbunden = False
 mqttsb_verbunden = False
+frostschutzfeedbackstring = 0
 feedbackdaten_alt = {}
 feedbackdaten_neu = {}
 sensordaten_alt = {}
@@ -101,11 +101,11 @@ sensordaten_neu = {}
 #=====Einstellungen=====#
 messloops = 10  # Anzahl der durchgeführten Messungen bei einem Messzyklus
 
-# Einstellung für den Frostschutz
+# Voreinstellung für den Frostschutz
 frostschutzschwellwert = 5 #Wert wenn er aktiviert wird
 frostschutzaus = 7 #Wert wenn er wieder ausgeschaltet wird
 
-# Messzeit Einstellung
+# Zeit Intervalle Einstellungen
 mess_umwelt_now = 0
 mess_umwelt_last = 0
 mess_strom_now = 0
@@ -118,14 +118,14 @@ ssid = "FRITZ!Box 7590 BC" #Änderung bei Netzwerkänderung
 password = "97792656499411616203" #Änderung bei Netzwerkänderung
 max_versuche = 10 #Wie viel fehlgeschlagene Versuche soll es geben bis er abbricht
 
-#MQTT-Publish
+#MQTT-Publish-Einstellungen
 pb_client_id = "mqttx_b1dee7e5"
 pb_broker_ip = "192.168.178.56" #Änderung bei Netzwerkänderung
 pb_port = 1883
 pb_user = "ChSch"
 pb_password = "12345678"
 
-# MQTT-Daten Subscribe
+# MQTT-Subscribe-Einstellungen
 subscribe_MQTT_CLIENT_ID = "mqttx_b1dee8e6"
 subscribe_MQTT_BROKER_IP = pb_broker_ip
 subscribe_MQTT_TOPIC_1 = "Steuerung/Stufen"
@@ -135,14 +135,19 @@ subscribe_MQTT_TOPIC_3 = "Steuerung/FrostAUS"
 # Kalibrierwerte Stromsensor
 mV_per_A = 100  #100mV pro 1A aus
 ACS_offset = 2500  #Spannung bei 0A (in mV)
-messpannung = 230 #Verbrauchspannung liegt bei 230V
-#IR-Daten
+messpannung = 230 #Zur Berechnung der Leistung
+
+# IR-Daten
+# Zur Steuerung des Heizstrahlers
 ir_keys = { 0: 0x1a, # Aus
             1: 0x04, # 1kW
             2: 0x06, # 2kW
             3: 0x0a} # 3kW
 
 ir_adresse = 0080
+
+# Variabel wird benötigt zum Senden der IR-Daten
+ir_code = 0x1a # IR Code grundstellung ist immer auf Aus
 #=======================#
 
 #=====Funktionen=====#
@@ -163,6 +168,7 @@ def messungaht10():
     """Messung der Temperatur und Luftfeuchtigkeit"""
     global raumtemperatur, luftfeuchtigkeit
     try:
+        # Alle Elemente in den Listen werden gelöscht, um sicherzustellen, dass sie leer sind, bevor neue Messdaten hinzugefügt werden.
         raumtemp.clear()
         raumluft.clear()
         #Messwerte auslesen
@@ -175,7 +181,7 @@ def messungaht10():
         luftfeuchtigkeit = messfilter(raumluft)
         
     except Exception as e:
-        print("Fehler beim Lesen des AHT10-Sensors:", e)
+        # Fehlerbehandlung, Texte werden auf den Bildschirm angezeigt
         raumtemperatur = "Fehler"
         luftfeuchtigkeit = "Fehler"
 
@@ -185,8 +191,10 @@ def messungccs811():
     """Messung Luftqualität"""
     global co2_wert, tvoc_wert
     try:
+        # Alle Elemente in den Listen werden gelöscht, um sicherzustellen, dass sie leer sind, bevor neue Messdaten hinzugefügt werden.
         co2_list.clear()
         tvoc_list.clear()
+        
         # Messwerte auslesen
         for i in range(messloops):
             co2_list.append(sensorccs811.eCO2)
@@ -197,7 +205,7 @@ def messungccs811():
         tvoc_wert = messfilter(tvoc_list)
     
     except Exception as e:
-        print("Fehler beim Lesen des CCS811-Sensors:", e)
+        # Fehlerbehandlung, Texte werden auf den Bildschirm angezeigt
         co2_wert = "Fehler"
         tvoc_wert = "Fehler"
 
@@ -212,7 +220,6 @@ def messungacs712():
         for i in range(messloops):
             #strom_list.append(strom_sensor.read())
             strom_list.append(4000)
-            
 
         # Mittelwertfilter anwenden
         mess_strom = messfilter(strom_list)
@@ -224,9 +231,12 @@ def messungacs712():
         strom_A = (strom_in_mv - ACS_offset) / mV_per_A
 
     except Exception as e:
-        print("Fehler beim Lesen des ACS712-Sensors:", e)
+        # Fehlerbehandlung, Texte werden auf den Bildschirm angezeigt
         strom_A = "Fehler"
-
+         
+        
+        
+    # Berechnung wird nur ausgeführt falls kein Fehler vorliegt
     if strom_A != "Fehler":
         # Momentanleistung berechnen
         momt_leistung = messpannung * strom_A
@@ -237,6 +247,7 @@ def messungacs712():
         ges_leistung = round(ges_leistung, 2)
         
     else:
+        # Fehlerbehandlung, Texte werden auf den Bildschirm angezeigt
         momt_leistung = "Fehler"
 #-------------------------------------------#
 def callback_strahler(topic, msg):
@@ -245,7 +256,6 @@ def callback_strahler(topic, msg):
     try:
         #Aus der MQTT-Nachricht den Werte für "Strahler" extrahieren
         sub_daten = json.loads(msg)
-        print(f"Empfange Daten {sub_daten}")
         
         # Überprüfen, ob der Wert für "Strahler" in den empfangenen Daten vorhanden ist
         # Wenn der Wert existiert und nicht None ist, wird der neue Wert gesetzt
@@ -265,7 +275,6 @@ def callback_strahler(topic, msg):
     except Exception as e:
         # Bei einen Fehler immer 0.
         # 0 Entspricht Heizstrahler Aus
-        print("Fehler beim Auslesen der Subscribe Daten")
         neu_strahlersteuerung = 0
         
     # Nur ein IR-Code Änderung wenn es eine Änderung gibt
@@ -284,33 +293,25 @@ def steuerung_strahler():
     # Kann immer eingeschaltet werden
     if neu_strahlersteuerung == 1:
         ir_tx.transmit(ir_adresse, ir_code)
-        strahlerfeedback = 1
+        strahlerfeedback = 1 # Feedback für die Node-Red-Dashboard Anzeige
         
     # Stufe 2
     # Kann nur Bedingt eingeschaltet werden, wenn er auf Stufe 1 oder 3 ist.
     elif neu_strahlersteuerung == 2 and strahlerfeedback in [1, 3]:
         ir_tx.transmit(ir_adresse, ir_code)
-        strahlerfeedback = 2
+        strahlerfeedback = 2 # Feedback für die Node-Red-Dashboard Anzeige
     
     # Stufe 3
     # Kann nur eingeschlatet werden wenn er in Stufe 2 ist.
     elif neu_strahlersteuerung == 3 and strahlerfeedback == 2:
         ir_tx.transmit(ir_adresse, ir_code)
-        strahlerfeedback = 3
-        
+        strahlerfeedback = 3 # Feedback für die Node-Red-Dashboard Anzeige
+    
+    # Aus
+    # Heizstrahler wird ausgeschaltet 
     elif neu_strahlersteuerung not in [1, 2, 3]:
         ir_tx.transmit(ir_adresse, ir_code)
         strahlerfeedback = 0
-#-------------------------------------------#
-def frostschutz():
-    """ Funktion zum Frostschutz des Raumes"""
-    ir_tx.transmit(ir_adresse, ir_keys.get(1)) # Strahler wird auf Stufe 1 geschaltet
-    time.sleep(5) # 5 Sekunden Wartezeit um große Einschaltströme zu verhindern
-    
-    ir_tx.transmit(ir_adresse, ir_keys.get(2)) # Strahler wird auf Stufe 2 geschaltet
-    time.sleep(5) # 5 Sekunden Wartezeit um große Einschaltströme zu verhindern
-    
-    ir_tx.transmit(ir_adresse, ir_keys.get(3)) # Strahler wird auf Stufe 3 geschaltet
 
 #-------------------------------------------#
 def wifi_verbindung():
@@ -322,7 +323,6 @@ def wifi_verbindung():
         return
     
     # Verbindung mit WLAN herstellen
-    print(f"Verbinde mit {ssid}...")
     wlan.connect(ssid, password) 
     versuche = 0
     
@@ -332,29 +332,27 @@ def wifi_verbindung():
             time.sleep(1)
             versuche += 1
                 
-            print(f"Verbindungsversuch {versuche}/{max_versuche}...")
         except Exception as e:
             # Fehlerbehandlung im Falle eines Fehlers bei der Verbindung
-            print("Fehler beim Verbindungsversuch:", e)
             
-                
             # Anzeige eines Fehlertexts beim Bootvorgang
             if bootvorgang:
                 txt.text(font, "Boot Vorgang abgebrochen", 72, 109, st7789.CYAN, st7789.BLACK)
+                
             # Anzeige des Fehlertexts
             txt.text(font, "Fehler beim Verbindungsversuch", 45, 132, st7789.CYAN, st7789.BLACK)
             txt.text(font, "mit den Wlan Netzwerk", 80, 155, st7789.CYAN, st7789.BLACK)
             
             return 
 
-    # Wenn Wlan verbunden ist wird die Netzwerkonfiguration ausgegeben
+    # Wenn Wlan verbunden ist, wird die Netzwerkonfiguration ausgegeben
     if wlan.isconnected():
-        print("WLAN verbunden!")
-        print("Netzwerk-Konfiguration:", wlan.ifconfig())
+        pass
+        #print("WLAN verbunden!")
+        #print("Netzwerk-Konfiguration:", wlan.ifconfig())
 
     else:
         # Wenn die Verbindung nicht erfolgreich war, Fehlernachricht anzeigen
-        print("Verbindung fehlgeschlagen nach mehreren Versuchen.")
         # Anzeige des Fehlertexts
         txt.fill(st7789.BLACK)
         
@@ -374,32 +372,28 @@ def publish_senden(topic, daten):
     try:
         # Sollte die Wlan Verbindung verloren sein, wird sie wieder hergestellt
         if not wlan.isconnected():
-            print("MQTT-Publish-Wlan Verbindung wiederherstellen")
             wifi_verbindung()
             
         # Verbindung zum Broker herstellen, Daten versenden und Verbindung trennen
         pb_client.connect()
-        print("Verbindung MQTT Publish hergestellt")
         
         # Dictionary wird in JSON-Format umgeschrieben
         json_daten = json.dumps(daten)
             
         # Daten werden am Broker gesendet
         pb_client.publish(topic, json_daten)
-        print("Daten verschickt", json_daten)
             
         # Verbindung zum Broker wird abgebrochen
         pb_client.disconnect()
             
     except Exception as e:
         # Anzeige des Fehlertexts
-        print("Fehler bei MQTT-Publish", e)
         txt.fill(st7789.BLACK)
         txt.text(font, "Fehler bei der Verbindung mit", 60, 132, st7789.CYAN, st7789.BLACK)
         txt.text(font, "MQTT-Broker-Publish", 85, 155, st7789.CYAN, st7789.BLACK)
         txt.text(font, f"Fehler {e}", 30, 178, st7789.CYAN, st7789.BLACK)
         
-        # Wird auf False gesetzt um die Schleife zu beenden
+        # Wird auf False gesetzt um die Hauptschleife zu beenden
         mqttpb_verbunden = False 
 
 #====================#
@@ -411,23 +405,25 @@ wlan = network.WLAN(network.STA_IF)
 wlan.active(True)
 wifi_verbindung()
 
-# MQTT-Client einrichten und verbinden
+# MQTT-Client einrichten und testen
 
 # Publish Client
 if wlan.isconnected():
+    
+    # MQTT-Publish-Client erstellen
     pb_client = MQTTClient(pb_client_id, pb_broker_ip, pb_port, pb_user, pb_password)
-    # Test Verbindung zum Client
+    # Test Verbindung zum Client herstellen
     try:
-        print("Verbindungstest zum MQTT-Publish-Client")
         pb_client.connect()
         time.sleep(0.5)
         pb_client.disconnect()
+        
+        # Der Wert wird auf True gesetzt, wenn der Test erfolgreich war. Nur bei einem erfolgreichen Test kann die Hauptschleife gestartet werden.
         mqttpb_verbunden = True
-        print("Verbindungstest Publish erfolgreich")
         
     except Exception as e:
+        
         # Anzeige des Fehlertexts
-        print("Fehler bei der MQTT-Publish-Verbindung:", e)
         txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
         txt.text(font, "Boot Vorgang abgebrochen", 72, 86, st7789.CYAN, st7789.BLACK)
         txt.text(font, "Fehler beim Verbinden mit", 60, 109, st7789.CYAN, st7789.BLACK)
@@ -437,18 +433,26 @@ if wlan.isconnected():
 # Subscribe Client
 if wlan.isconnected():
     try:
-        print("Verbinden zum Subscribe Broker")
+        # MQTT-Subscribe-Client erstellen
         subscribe_client = MQTTClient(subscribe_MQTT_CLIENT_ID, subscribe_MQTT_BROKER_IP)
+        
+        # Callback-Funktion wird festgelegt. Bei Empfang von Nachrichten wird die Funktion durch den Subscribe-Client aufgerufen wird.
         subscribe_client.set_callback(callback_strahler)
+        
+        # Verbindung zum Subscribe Broker wird hergestellt
         subscribe_client.connect()
-        subscribe_client.subscribe(subscribe_MQTT_TOPIC_1)
-        subscribe_client.subscribe(subscribe_MQTT_TOPIC_2)
-        subscribe_client.subscribe(subscribe_MQTT_TOPIC_3)
+        
+        # Topics werden abonniert
+        subscribe_client.subscribe(subscribe_MQTT_TOPIC_1) #Topic Steuerung/Stufen
+        subscribe_client.subscribe(subscribe_MQTT_TOPIC_2) #Topic Steuerung/FrostEIN
+        subscribe_client.subscribe(subscribe_MQTT_TOPIC_3) #Topic Steuerung/FrostAUS
+        
+        # Der Wert wird auf True gesetzt, wenn der Test erfolgreich war. Nur bei einem erfolgreichen Test kann die Hauptschleife gestartet werden.
         mqttsb_verbunden = True
-        print("Erfolgreich Verbunden Subscribe ")
+        
+        
     except Exception as e:
         # Anzeige des Fehlertexts
-        print("Fehler bei der MQTT-Subscribe-Verbindung:", e)
         txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
         txt.text(font, "Boot Vorgang abgebrochen", 72, 86, st7789.CYAN, st7789.BLACK)
         txt.text(font, "Fehler beim Verbinden mit", 60, 109, st7789.CYAN, st7789.BLACK)
@@ -463,15 +467,19 @@ if wlan.isconnected():
             txt.text(font, f"Fehler {e}", 30, 201, st7789.CYAN, st7789.BLACK)
 #=================================#
 
-# Bildschirmtexte einfügen nach Boot Vorgang
+# Bildschirmtexte einfügen nach erfolgreichen Boot Vorgang
 if wlan.isconnected() and mqttpb_verbunden and mqttsb_verbunden:
     txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
     txt.text(font, "Boot Vorgang erfolgreich", 72, 109, st7789.CYAN, st7789.BLACK)
+    
+    # Merker für Fehlertexte falls nach den Boot Vorgang Fehler Texte auf Bildschirm geschrieben werden
     bootvorgang = False
+    
+    # Kurze Wartezeit zum Lesen
     time.sleep(2)
     txt.fill_rect(72, 109, 195, 15, st7789.BLACK)
 
-# Bildschirm Texte einfügen
+# Bildschirm Texte einfügen für die Sensorwerte und Einstellungen
     txt.text(font, "Temperatur: ", 30, 40, st7789.CYAN, st7789.BLACK)
     txt.text(font, "Luftfeuchtigkeit: ", 30, 63, st7789.CYAN, st7789.BLACK)
     txt.text(font, "CO2-Wert: ", 30, 86, st7789.CYAN, st7789.BLACK)
@@ -479,10 +487,12 @@ if wlan.isconnected() and mqttpb_verbunden and mqttsb_verbunden:
     txt.text(font, "Aktuelle Leistung: ", 30, 132, st7789.CYAN, st7789.BLACK)
     txt.text(font, "Gesamte Leistung: ", 30, 155, st7789.CYAN, st7789.BLACK)
     txt.text(font, "Frostschutzschwellwert: ", 30, 178, st7789.CYAN, st7789.BLACK)
+    
 
 #=====Hauptschleife=====#
 while mqttpb_verbunden and mqttsb_verbunden:
     
+    # Aktuelle Zeit wird gemessen für die Messintervalle der Sensoren
     mess_umwelt_now = time.ticks_ms()
     mess_strom_now = time.ticks_ms()
     
@@ -491,7 +501,6 @@ while mqttpb_verbunden and mqttsb_verbunden:
         mess_umwelt_last = mess_umwelt_now
         
         # Temperatur und Luftfeuchtigkeit messen
-        print("Umwelt-Messung")
         messungaht10()
     
         # Luftqualität messen wenn der Sensor bereit ist
@@ -505,41 +514,61 @@ while mqttpb_verbunden and mqttsb_verbunden:
                     sensorccs811.put_envdata(luftfeuchtigkeit, raumtemperatur)
                 
             messungccs811()
-            print("Umwelt-Messung beendet")
+            
         except Exception as e:
-            print("Fehler beim Lesen des CCS811-Sensors:", e)
+            # Fehlerbehandlung, Texte werden auf den Bildschirm angezeigt
             co2_wert = "Fehler"
-            tvoc_wert = "Fehler"
-    
+            tvoc_wert = "Fehler" 
     
     # Leistung messen sobald der Heizstrahler eingeschaltet ist    
     if neu_strahlersteuerung in [1, 2, 3]:
         
         # In einen Takt von 1 Sekunde wird gemessen
         if time.ticks_diff(mess_strom_now, mess_strom_last) >= mess_strom_intervall:
-            print("Strom-Messung gestartet")
+            
             mess_strom_last = mess_strom_now
+            # Funktion zur Messung des Stroms und Berechnung der Leistung
             messungacs712()
-            print("Strom-Messung beendet")
     
     # Wenn der Heizstrahler ist ausgeschaltet wird der Wert auf 0 gesetzt
     elif strahlerfeedback == 0:
         momt_leistung = 0
         
-    # Frostschutz Funktion
+    # Frostschutz
+    """ Automatisches Ein- und Ausschalten des Heizstrahlers zur Aufrechterhaltung einer konstanten Raumtemperatur """
     
-    # Frostschutz wird nur ausgeführt wenn es ein Integer ist. Sollte es ein String sein hat der Sensor ein Fehler
-    if isinstance(raumtemperatur, int):
+    # Der Schwellwert muss immer kleiner sein als der Ausschaltwert
+    if isinstance(raumtemperatur, int) and frostschutzschwellwert < frostschutzaus:
         
+        # Heizstrahler wird eingeschaltet wenn die Temperatur unter den eingestellten Wert ist und er nicht eingeschaltet ist
         if raumtemperatur < frostschutzschwellwert  and strahlerfeedback == 0:
-            frostschutz()
+            ir_tx.transmit(ir_adresse, ir_keys.get(1)) # Strahler wird auf Stufe 1 geschaltet
+            time.sleep(5) # 5 Sekunden Wartezeit um große Einschaltströme zu verhindern
+            
+            ir_tx.transmit(ir_adresse, ir_keys.get(2)) # Strahler wird auf Stufe 2 geschaltet
+            time.sleep(5) # 5 Sekunden Wartezeit um große Einschaltströme zu verhindern
+    
+            ir_tx.transmit(ir_adresse, ir_keys.get(3)) # Strahler wird auf Stufe 3 geschaltet
+            
+            # Feedback an das Node-Red-Dashboard zur Anzeige des aktuellen Status des Heizstrahlers und der Frostschutzfunktion
             strahlerfeedback = 3
             frostschutzfeedback = 1
-            
+         
+        # Heizstrahler wird ausgeschaltet wenn die Temperatur über den eingestellten Wert ist und die Frostschutzfunktion aktiv ist
         elif raumtemperatur > frostschutzaus and frostschutzfeedback == 1:
-            ir_tx.transmit(ir_adresse, ir_keys.get(0))
+            ir_tx.transmit(ir_adresse, ir_keys.get(0)) # Heizstrahler wird ausgeschaltet
+            
+            # Feedback an das Node-Red-Dashboard zur Anzeige des aktuellen Status des Heizstrahlers und der Frostschutzfunktion
             strahlerfeedback = 0
             frostschutzfeedback = 0
+            
+        
+        # Setzt das Frostschutzfeedback für die Anzeige im Node-Red-Dashboard, um den Status des Frostschutzmechanismus (aktiv oder inaktiv) anzuzeigen.
+        if frostschutzfeedback == 0:
+            frostschutzfeedbackstring = "Aus" #Bei inaktivem Frostschutz
+            
+        elif frostschutzfeedback == 1:
+            frostschutzfeedbackstring = "Aktiv" #Bei aktivem Frostschutz
             
     #Sensordaten in JSON-Fomart schreiben
     sensordaten_neu = {
@@ -554,7 +583,7 @@ while mqttpb_verbunden and mqttsb_verbunden:
     #Feedback vom Strahler in JSON-Fomart schreiben
     feedbackdaten_neu = {
         "Strahlerfeedback": strahlerfeedback,
-        "Frostschutzfeedback": frostschutzfeedback,
+        "Frostschutzfeedback": frostschutzfeedbackstring,
         "Frostschutzschwellwert": frostschutzschwellwert,
         "FrostschutzAus": frostschutzaus
         }
@@ -610,25 +639,26 @@ while mqttpb_verbunden and mqttsb_verbunden:
             subscribe_client.check_msg()
         
         except OSError as e:
-            print("Netzwerkfehler beim Subscribe Client")
+            # Fehlerbehandlung bei Netzwerkfehler
+
             try:
                 # Überprüfen ob eine Verbindung zum Wlan Netzwerkvorhanden ist
                 if not wlan.isconnected():
-                    print("Versuchen sich wieder mit den Wlan zu verbinden")
                     wifi_verbindung()
                 
                 # Versuchen sich wieder mit den Broker zu verbinden
-                print("Versuchen sich wieder mit den Subscribe Broker zu verbinden")
+
+                # Reconntecten und Subscriben
                 subscribe_client.connect()
-                subscribe_client.subscribe(subscribe_MQTT_TOPIC_1)
-                subscribe_client.subscribe(subscribe_MQTT_TOPIC_2)
-                subscribe_client.subscribe(subscribe_MQTT_TOPIC_3)
+                subscribe_client.subscribe(subscribe_MQTT_TOPIC_1) #Topic Steuerung/Stufen
+                subscribe_client.subscribe(subscribe_MQTT_TOPIC_2) #Topic Steuerung/FrostEIN
+                subscribe_client.subscribe(subscribe_MQTT_TOPIC_3) #Topic Steuerung/FrostAUS
                 
-                # Nach neuen Nachrichten Abfragen
+                # Erneut nach neuen Nachrichten Abfragen
                 subscribe_client.check_msg()
             
             except Exception as e2:
-                print("Unbekannter Netzwerkfehler", e2)
+                # Fehlernachricht falls das Reconnecten nicht funktioniert
                 
                 # Anzeige des Fehler Textes
                 txt.fill(st7789.BLACK)
@@ -636,18 +666,18 @@ while mqttpb_verbunden and mqttsb_verbunden:
                 txt.text(font, "MQTT-Broker-Subscribe-", 85, 155, st7789.CYAN, st7789.BLACK)
                 txt.text(font, f"Fehler {e2}", 30, 178, st7789.CYAN, st7789.BLACK)
                 
+                # Der Wert wird auf False gesetzt um die Hauptschleife kontrolliert zu beenden
                 mqttsb_verbunden = False
         
         except Exception as e:
-            print("Fehler beim Subscribe Client", e)
-            
             # Anzeige des Fehler Textes
             txt.fill(st7789.BLACK)
             txt.text(font, "Fehler beim Verbinden mit", 60, 132, st7789.CYAN, st7789.BLACK)
             txt.text(font, "MQTT-Broker-Subscribe", 85, 155, st7789.CYAN, st7789.BLACK)
             txt.text(font, f"Fehler {e}", 30, 178, st7789.CYAN, st7789.BLACK)
+            
+            # Der Wert wird auf False gesetzt um die Hauptschleife kontrolliert zu beenden
             mqttsb_verbunden = False
 
 # Bei Beendigung der Schleife wird folgendes auf den Bildschirm angezeigt
 txt.text(font, "Hauptschleife beendet", 80, 40, st7789.CYAN, st7789.BLACK)
-
