@@ -618,3 +618,8 @@ while mqttpb_verbunden and mqttsb_verbunden:
             txt.text(font, f"Fehler {e}", 30, 178, st7789.CYAN, st7789.BLACK)
             mqttsb_verbunden = False
 
+# Bei Beendigung der Schleife wird folgendes auf den Bildschirm angezeigt
+txt.fill(st7789.BLACK)
+txt.text(font, "Hauptschleife beendet", 60, 132, st7789.CYAN, st7789.BLACK)
+txt.text(font, "Fehler", 85, 155, st7789.CYAN, st7789.BLACK)
+txt.text(font, f"{e}", 30, 178, st7789.CYAN, st7789.BLACK)
