@@ -106,9 +106,12 @@ frostschutzschwellwert = 5 #Wert wenn er aktiviert wird
 frostschutzaus = 7 #Wert wenn er wieder ausgeschaltet wird
 
 # Messzeit Einstellung
-mess_now = 0
-mess_last = 0
-mess_intervall = 30000 # in ms, entspricht 30s
+mess_umwelt_now = 0
+mess_umwelt_last = 0
+mess_strom_now = 0
+mess_strom_last = 0
+mess_umwelt_intervall = 30000 # in ms, entspricht 30s
+mess_strom_intervall = 1000 # in ms, entspricht 1s
 
 # WLAN-Daten
 ssid = "FRITZ!Box 7590 BC" #Änderung bei Netzwerkänderung
@@ -125,7 +128,9 @@ pb_password = "12345678"
 # MQTT-Daten Subscribe
 subscribe_MQTT_CLIENT_ID = "mqttx_b1dee8e6"
 subscribe_MQTT_BROKER_IP = pb_broker_ip
-subscribe_MQTT_TOPIC = "Heizstrahler/Steuerung"
+subscribe_MQTT_TOPIC_1 = "Steuerung/Stufen"
+subscribe_MQTT_TOPIC_2 = "Steuerung/FrostEIN"
+subscribe_MQTT_TOPIC_3 = "Steuerung/FrostAUS"
 
 # Kalibrierwerte Stromsensor
 mV_per_A = 100  #100mV pro 1A aus
@@ -236,13 +241,27 @@ def messungacs712():
 #-------------------------------------------#
 def callback_strahler(topic, msg):
     """Abrufen der Steuerungsdaten für den Heizstrahler """
-    global neu_strahlersteuerung, alt_strahlersteuerung, ir_code
+    global neu_strahlersteuerung, alt_strahlersteuerung, ir_code, frostschutzschwellwert, frostschutzaus
     try:
         #Aus der MQTT-Nachricht den Werte für "Strahler" extrahieren
         sub_daten = json.loads(msg)
         print(f"Empfange Daten {sub_daten}")
-        neu_strahlersteuerung = sub_daten.get("Strahler")
-    
+        
+        # Überprüfen, ob der Wert für "Strahler" in den empfangenen Daten vorhanden ist
+        # Wenn der Wert existiert und nicht None ist, wird der neue Wert gesetzt
+        if sub_daten.get("Strahler") is not None:
+            neu_strahlersteuerung = sub_daten.get("Strahler")
+        
+        # Überprüfen, ob der Wert für "FrostEIN" in den empfangenen Daten vorhanden ist
+        # Wenn der Wert existiert und nicht None ist, wird der neue Wert gesetzt
+        if sub_daten.get("FrostEIN") is not None:
+            frostschutzschwellwert = sub_daten.get("FrostEIN")
+        
+        # Überprüfen, ob der Wert für "FrostAUS" in den empfangenen Daten vorhanden ist
+        # Wenn der Wert existiert und nicht None ist, wird der neue Wert gesetzt
+        if sub_daten.get("FrostAUS") is not None:
+            frostschutzaus = sub_daten.get("FrostAUS")
+        
     except Exception as e:
         # Bei einen Fehler immer 0.
         # 0 Entspricht Heizstrahler Aus
@@ -410,10 +429,10 @@ if wlan.isconnected():
         # Anzeige des Fehlertexts
         print("Fehler bei der MQTT-Publish-Verbindung:", e)
         txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
-        txt.text(font, "Boot Vorgang abgebrochen", 72, 109, st7789.CYAN, st7789.BLACK)
-        txt.text(font, "Fehler beim Verbinden mit", 60, 132, st7789.CYAN, st7789.BLACK)
-        txt.text(font, "MQTT-Broker-Publish", 85, 155, st7789.CYAN, st7789.BLACK)
-        txt.text(font, f"Fehler {e}", 30, 178, st7789.CYAN, st7789.BLACK)
+        txt.text(font, "Boot Vorgang abgebrochen", 72, 86, st7789.CYAN, st7789.BLACK)
+        txt.text(font, "Fehler beim Verbinden mit", 60, 109, st7789.CYAN, st7789.BLACK)
+        txt.text(font, "MQTT-Broker-Publish", 85, 132, st7789.CYAN, st7789.BLACK)
+        txt.text(font, f"Fehler {e}", 30, 155, st7789.CYAN, st7789.BLACK)
 
 # Subscribe Client
 if wlan.isconnected():
@@ -422,20 +441,22 @@ if wlan.isconnected():
         subscribe_client = MQTTClient(subscribe_MQTT_CLIENT_ID, subscribe_MQTT_BROKER_IP)
         subscribe_client.set_callback(callback_strahler)
         subscribe_client.connect()
-        subscribe_client.subscribe(subscribe_MQTT_TOPIC)
+        subscribe_client.subscribe(subscribe_MQTT_TOPIC_1)
+        subscribe_client.subscribe(subscribe_MQTT_TOPIC_2)
+        subscribe_client.subscribe(subscribe_MQTT_TOPIC_3)
         mqttsb_verbunden = True
         print("Erfolgreich Verbunden Subscribe ")
     except Exception as e:
         # Anzeige des Fehlertexts
         print("Fehler bei der MQTT-Subscribe-Verbindung:", e)
         txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
-        txt.text(font, "Boot Vorgang abgebrochen", 72, 109, st7789.CYAN, st7789.BLACK)
-        txt.text(font, "Fehler beim Verbinden mit", 60, 132, st7789.CYAN, st7789.BLACK)
+        txt.text(font, "Boot Vorgang abgebrochen", 72, 86, st7789.CYAN, st7789.BLACK)
+        txt.text(font, "Fehler beim Verbinden mit", 60, 109, st7789.CYAN, st7789.BLACK)
         
         # Falls beim MQTT-Publish bereits ein Fehler ist, wird die Nachricht darunter eingefügt
         if mqttpb_verbunden == True:
-            txt.text(font, "MQTT-Broker-Subscribe", 80, 155, st7789.CYAN, st7789.BLACK)
-            txt.text(font, f"Fehler {e}", 30, 178, st7789.CYAN, st7789.BLACK)
+            txt.text(font, "MQTT-Broker-Subscribe", 80, 132, st7789.CYAN, st7789.BLACK)
+            txt.text(font, f"Fehler {e}", 30, 1553, st7789.CYAN, st7789.BLACK)
             
         else:
             txt.text(font, "MQTT-Broker-Subscribe", 80, 178, st7789.CYAN, st7789.BLACK)
@@ -462,14 +483,15 @@ if wlan.isconnected() and mqttpb_verbunden and mqttsb_verbunden:
 #=====Hauptschleife=====#
 while mqttpb_verbunden and mqttsb_verbunden:
     
-    mess_now = time.ticks_ms()
+    mess_umwelt_now = time.ticks_ms()
+    mess_strom_now = time.ticks_ms()
     
     # Alle 30 Sekunden wird eine Messung durchgeführt
-    if time.ticks_diff(mess_now, mess_last) >= mess_intervall:
-        mess_last = mess_now
+    if time.ticks_diff(mess_umwelt_now, mess_umwelt_last) >= mess_umwelt_intervall:
+        mess_umwelt_last = mess_umwelt_now
         
         # Temperatur und Luftfeuchtigkeit messen
-        print("Messung")
+        print("Umwelt-Messung")
         messungaht10()
     
         # Luftqualität messen wenn der Sensor bereit ist
@@ -483,7 +505,7 @@ while mqttpb_verbunden and mqttsb_verbunden:
                     sensorccs811.put_envdata(luftfeuchtigkeit, raumtemperatur)
                 
             messungccs811()
-            print("Messung beendet")
+            print("Umwelt-Messung beendet")
         except Exception as e:
             print("Fehler beim Lesen des CCS811-Sensors:", e)
             co2_wert = "Fehler"
@@ -492,7 +514,13 @@ while mqttpb_verbunden and mqttsb_verbunden:
     
     # Leistung messen sobald der Heizstrahler eingeschaltet ist    
     if neu_strahlersteuerung in [1, 2, 3]:
-        messungacs712()
+        
+        # In einen Takt von 1 Sekunde wird gemessen
+        if time.ticks_diff(mess_strom_now, mess_strom_last) >= mess_strom_intervall:
+            print("Strom-Messung gestartet")
+            mess_strom_last = mess_strom_now
+            messungacs712()
+            print("Strom-Messung beendet")
     
     # Wenn der Heizstrahler ist ausgeschaltet wird der Wert auf 0 gesetzt
     elif strahlerfeedback == 0:
@@ -571,7 +599,7 @@ while mqttpb_verbunden and mqttsb_verbunden:
         
         # Frostschutzschwellwert
         txt.fill_rect(217, 178, 100, 15, st7789.BLACK)
-        txt.text(font, "5 °C", 217, 178, st7789.CYAN, st7789.BLACK)
+        txt.text(font, f"{frostschutzschwellwert} °C", 217, 178, st7789.CYAN, st7789.BLACK)
         
         # Daten werden zum Broker gesendet
         publish_senden("Raum/Feedback", feedbackdaten_neu)
@@ -585,14 +613,16 @@ while mqttpb_verbunden and mqttsb_verbunden:
             print("Netzwerkfehler beim Subscribe Client")
             try:
                 # Überprüfen ob eine Verbindung zum Wlan Netzwerkvorhanden ist
-                if not wlan.isconnecte():
+                if not wlan.isconnected():
                     print("Versuchen sich wieder mit den Wlan zu verbinden")
                     wifi_verbindung()
                 
                 # Versuchen sich wieder mit den Broker zu verbinden
                 print("Versuchen sich wieder mit den Subscribe Broker zu verbinden")
                 subscribe_client.connect()
-                subscribe_client.subscribe(subscribe_MQTT_TOPIC)
+                subscribe_client.subscribe(subscribe_MQTT_TOPIC_1)
+                subscribe_client.subscribe(subscribe_MQTT_TOPIC_2)
+                subscribe_client.subscribe(subscribe_MQTT_TOPIC_3)
                 
                 # Nach neuen Nachrichten Abfragen
                 subscribe_client.check_msg()
@@ -619,7 +649,4 @@ while mqttpb_verbunden and mqttsb_verbunden:
             mqttsb_verbunden = False
 
 # Bei Beendigung der Schleife wird folgendes auf den Bildschirm angezeigt
-txt.fill(st7789.BLACK)
-txt.text(font, "Hauptschleife beendet", 60, 132, st7789.CYAN, st7789.BLACK)
-txt.text(font, "Fehler", 85, 155, st7789.CYAN, st7789.BLACK)
-txt.text(font, f"{e}", 30, 178, st7789.CYAN, st7789.BLACK)
+txt.text(font, "Hauptschleife beendet", 80, 40, st7789.CYAN, st7789.BLACK)
