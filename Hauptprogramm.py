@@ -16,8 +16,19 @@ import st7789py as st7789 #Bildschirm-Bibliothek
 import vga1_8x16 as font #Bildschirm Font
 #======================#
 
-#=====Bildschirm-Infos=====#
+#=====Hardware Informationen=====#
 #ESP32-S3
+
+#I2C
+#SCL = Pin 1
+#SDA = Pin 2
+
+#DeboSens20A
+#ADC = Pin 4
+
+#KY-005
+#Signal (S) = Pin 5
+
 #Bildschirm Belegung
 #ST7789V3
 #SCK = Pin 42
@@ -26,7 +37,7 @@ import vga1_8x16 as font #Bildschirm Font
 #Reset = Pin 40
 #CS = Pin 39
 #dc = Pin 38
-#==========================#
+#================================#
 
 #=====Pins definieren=====#
 # I2C-Pins definieren:
@@ -114,13 +125,13 @@ mess_umwelt_intervall = 30000 # in ms, entspricht 30s
 mess_strom_intervall = 1000 # in ms, entspricht 1s
 
 # WLAN-Daten
-ssid = "FRITZ!Box 7590 BC" #Änderung bei Netzwerkänderung
-password = "97792656499411616203" #Änderung bei Netzwerkänderung
+ssid = "FRITZ!Box 7590 BC" #Änderung bei Netzwerkänderung #wlan_ssid
+password = "97792656499411616203" #Änderung bei Netzwerkänderung #wlan_passwort
 max_versuche = 10 #Wie viel fehlgeschlagene Versuche soll es geben bis er abbricht
 
 #MQTT-Publish-Einstellungen
 pb_client_id = "mqttx_b1dee7e5"
-pb_broker_ip = "192.168.178.56" #Änderung bei Netzwerkänderung
+pb_broker_ip = "192.168.178.56" #Änderung bei Netzwerkänderung #broker_ip
 pb_port = 1883
 pb_user = "ChSch"
 pb_password = "12345678"
