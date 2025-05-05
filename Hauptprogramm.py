@@ -1,14 +1,18 @@
 #Projekt: Smart Heizungssteuerung
 #Ersteller: Ch. Scheele
 #Erstellungsdatum: 25.03.2025
-#Letzte Änderung: 24.04.2025
-
+#Letzte Änderung: 29.04.2025
+#Programm Name: main (hauptprogramm)
+#Aufgabe: Messung und Auswertung der Sensordaten
+#		  Kommunikation mit den MQTT-Broker
+#		  Steuern des Heizstrahlers
 #=====Bibliotheken=====#
 from machine import Pin, PWM, SoftI2C, SoftSPI
 import time
 import json
 import network
 from umqtt.simple import MQTTClient
+from Start import wlan_ssid, wlan_passwort, broker_ip # Daten aus der der Start Datei ziehen
 from aht10 import AHT10  # Temperatur- und Luftfeuchtigkeitssensor
 import CCS811 # Luftqualitätssensor
 from ir_tx.nec import NEC # IR-Transmitter
@@ -125,13 +129,13 @@ mess_umwelt_intervall = 30000 # in ms, entspricht 30s
 mess_strom_intervall = 1000 # in ms, entspricht 1s
 
 # WLAN-Daten
-ssid = "FRITZ!Box 7590 BC" #Änderung bei Netzwerkänderung #wlan_ssid
-password = "97792656499411616203" #Änderung bei Netzwerkänderung #wlan_passwort
-max_versuche = 10 #Wie viel fehlgeschlagene Versuche soll es geben bis er abbricht
+ssid = wlan_ssid # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
+password = wlan_passwort # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
+max_versuche = 60 #Wie viel fehlgeschlagene Versuche soll es geben bis er abbricht. 60 Versuche entsprichen 1 Minuten
 
 #MQTT-Publish-Einstellungen
 pb_client_id = "mqttx_b1dee7e5"
-pb_broker_ip = "192.168.178.56" #Änderung bei Netzwerkänderung #broker_ip
+pb_broker_ip = broker_ip # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
 pb_port = 1883
 pb_user = "ChSch"
 pb_password = "12345678"
@@ -513,7 +517,7 @@ if wlan.isconnected() and mqttpb_verbunden and mqttsb_verbunden:
     txt.text(font, "TVOC-Wert: ", 30, 109, st7789.CYAN, st7789.BLACK)
     txt.text(font, "Aktuelle Leistung: ", 30, 132, st7789.CYAN, st7789.BLACK)
     txt.text(font, "Gesamte Leistung: ", 30, 155, st7789.CYAN, st7789.BLACK)
-    txt.text(font, "Frostschutzschwellwert: ", 30, 178, st7789.CYAN, st7789.BLACK)
+    txt.text(font, "Frostschutz Einschalten: ", 30, 178, st7789.CYAN, st7789.BLACK)
     
 
 #=====Hauptschleife=====#
@@ -660,7 +664,7 @@ while mqttpb_verbunden and mqttsb_verbunden:
         
         # Frostschutzschwellwert
         txt.fill_rect(217, 178, 100, 15, st7789.BLACK)
-        txt.text(font, f"{frostschutzschwellwert} °C", 217, 178, st7789.CYAN, st7789.BLACK)
+        txt.text(font, f"{frostschutzschwellwert} °C", 223, 178, st7789.CYAN, st7789.BLACK)
         
         # Daten werden zum Broker gesendet
         publish_senden("Raum/Feedback", feedbackdaten_neu)
@@ -715,6 +719,8 @@ while mqttpb_verbunden and mqttsb_verbunden:
             
             # Der Wert wird auf False gesetzt um die Hauptschleife kontrolliert zu beenden
             mqttsb_verbunden = False
+            
+# Verlassen der Hauptschleife
 
 # Bei Beendigung der Schleife wird folgendes auf den Bildschirm angezeigt
 txt.text(font, "Hauptschleife beendet", 80, 40, st7789.CYAN, st7789.BLACK)

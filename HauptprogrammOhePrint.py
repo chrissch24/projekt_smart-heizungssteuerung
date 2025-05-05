@@ -116,7 +116,7 @@ mess_strom_intervall = 1000 # in ms, entspricht 1s
 # WLAN-Daten
 ssid = "FRITZ!Box 7590 BC" #Änderung bei Netzwerkänderung
 password = "97792656499411616203" #Änderung bei Netzwerkänderung
-max_versuche = 10 #Wie viel fehlgeschlagene Versuche soll es geben bis er abbricht
+max_versuche = 300 #Wie viel fehlgeschlagene Versuche soll es geben bis er abbricht. 300 Versuche entsprichen 5 Minuten
 
 #MQTT-Publish-Einstellungen
 pb_client_id = "mqttx_b1dee7e5"
@@ -486,7 +486,7 @@ if wlan.isconnected() and mqttpb_verbunden and mqttsb_verbunden:
     txt.text(font, "TVOC-Wert: ", 30, 109, st7789.CYAN, st7789.BLACK)
     txt.text(font, "Aktuelle Leistung: ", 30, 132, st7789.CYAN, st7789.BLACK)
     txt.text(font, "Gesamte Leistung: ", 30, 155, st7789.CYAN, st7789.BLACK)
-    txt.text(font, "Frostschutzschwellwert: ", 30, 178, st7789.CYAN, st7789.BLACK)
+    txt.text(font, "Frostschutz Einschalten: ", 30, 178, st7789.CYAN, st7789.BLACK)
     
 
 #=====Hauptschleife=====#
@@ -628,7 +628,7 @@ while mqttpb_verbunden and mqttsb_verbunden:
         
         # Frostschutzschwellwert
         txt.fill_rect(217, 178, 100, 15, st7789.BLACK)
-        txt.text(font, f"{frostschutzschwellwert} °C", 217, 178, st7789.CYAN, st7789.BLACK)
+        txt.text(font, f"{frostschutzschwellwert} °C", 223, 178, st7789.CYAN, st7789.BLACK)
         
         # Daten werden zum Broker gesendet
         publish_senden("Raum/Feedback", feedbackdaten_neu)

@@ -1,7 +1,12 @@
 #Projekt: Smart Heizungssteuerung
 #Ersteller: Ch. Scheele
 #Erstellungsdatum: 25.03.2025
-#Letzte Änderung: 24.04.2025
+#Letzte Änderung: 29.04.2025
+#Programm Name: Start
+#Aufgabe: Definieren der folgenden Netzwerkeinstellungen
+#		  Wlan-SSID
+#		  Wlan-Passwort
+#		  MQTT-Broker-IP
 
 #=====Bibliotheken=====#
 import time
@@ -13,13 +18,16 @@ import socket
 wlan_ssid = 0
 wlan_passwort = 0
 broker_ip = 0
+params = {}
 #=============================#
 
 #===== Access Point erstellen =====#
 ap = network.WLAN(network.AP_IF)
 ap.active(True)
-ap.config(essid='ESP32_CS', password='12345678', authmode=network.AUTH_WPA_PSK)
+# SSID und Passwort wird für den Accesspoint erstellt
+ap.config(essid="Smart-ESP32S3", authmode=network.AUTH_OPEN)
 
+# Warteschleife bis der Accespoint ativiert ist
 while not ap.active():
     pass
 
@@ -94,24 +102,72 @@ ini_server.listen(5)
 #===== Hauptschleife =====#
 
 while True:
-
-    # Website erstellen
+    # Auf eingehende Verbindung warten
     conn, addr = ini_server.accept()
+    print("Verbindung von", addr)
+    
+    # HTTP-Request vom Client empfangen
     request = conn.recv(1024)
-    conn.send("HTTP/1.1 200 OK\n")
-    conn.send("Content-Type: text/html\n\n")
-    conn.send(html)
-    conn.close()
+    request_str = request.decode('utf-8')
     
-    # Hauptschleife beenden
-    if wlan_ssid != 0 and wlan_passwort != 0 and broker_ ip != 0:
-        print("Progamm wird beendet")
+    
+    # Prüfen, ob eine POST-Anfrage durch das Drücken des "Speichern"-Buttons gesendet wurde
+    if 'POST /save' in request_str:
+        
+        # Den Dateninhalt(Body) aus der HTTP-Nachricht extrahieren
+        body = request_str.split('\r\n\r\n', 1)[1]  # Nach Header kommt der Body
+        print("Body:", body)
+        
+        # Dateninhalt in Schlüssel-Werte-Paare aufteilen und in einen Dictionary speichern
+        
+        for pair in body.split('&'):
+            key, value = pair.split('=')
+            
+            # Decodierung des URL-Codes
+            value = value.replace('%20', ' ')  # %20 wird zu Leerzeichen
+            value = value.replace('+', ' ')     # + wird zu Leerzeichen
+            value = value.replace('%2B', '+')  # %2B wird zu Pluszeichen
+            value = value.replace('%3D', '=')  # %3D wird zu Gleichzeichen
+            value = value.replace('%2E', '.')  # %2E wird zu Punkt
+            value = value.replace('%21', '!')  # %21 wird zu Ausrufezeichen
+            value = value.replace('%3F', '?')  # %3F wird zu Fragezeichenn
+            value = value.replace('%23', '#')  # %23 wird zu Hash
+            value = value.replace('%5F', '_')  # %5F wird zu Unterstrich
+            value = value.replace('%2D', '-')  # %2D wird zu Bindestrich
+            
+            params[key] = value
+        
+        # Werte aus den Dictionary holen
+        wlan_ssid = params.get('ssid', 0)
+        wlan_passwort = params.get('password', 0)
+        broker_ip = params.get('broker', 0)
+        
+        # Eine einfache Bestätigungsseite an den Server senden
+        response = """\
+HTTP/1.1 200 OK
+
+Daten gespeichert. Bitte schließen Sie das Fenster.
+"""
+        conn.send(response.encode('utf-8'))
+        conn.close()
+
+        # Hauptschleife beenden, da die Netzwerk-Daten in der Variabeln gespeichert sind
         break
-    
-# Schließe Webserver
-ini_server
+
+    else:
+        # Sende die gespeicherte HTML-Seite als Antwort auf die GET-Anfrage
+        conn.send("HTTP/1.1 200 OK\n")
+        conn.send("Content-Type: text/html\n\n")
+        conn.send(html)
+        conn.close()
+
+# Verlassen der Hauptschleife
+
+# Webserver schließen
+ini_server.close()
 time.sleep(2)
 
-# Deaktiviere den Acess Point
+# Access Point deaktivieren
 ap.active(False)
 time.sleep(2)
+print("Initialisierungsprogramm beendet")
