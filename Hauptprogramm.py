@@ -99,7 +99,8 @@ co2_list = []
 tvoc_list = []
 strom_list = []
 momt_leistung = 0
-ges_leistung = 0
+ges_verbrauch = 0
+teil_verbrauch = 0
 neu_strahlersteuerung = 0
 alt_strahlersteuerung = 0
 strahlerfeedback = 0
@@ -111,6 +112,7 @@ feedbackdaten_alt = {}
 feedbackdaten_neu = {}
 sensordaten_alt = {}
 sensordaten_neu = {}
+betriebszahler = 0
 #=============================#
 
 #=====Einstellungen=====#
@@ -229,7 +231,7 @@ def messungccs811():
 #-------------------------------------------#
 def messungacs712():
     """Messung des Stroms des Heizstrahlers und Umrechnung in Watt """
-    global momt_leistung, ges_leistung
+    global momt_leistung
     try:
         strom_list.clear()
         
@@ -257,10 +259,6 @@ def messungacs712():
         # Momentanleistung berechnen
         momt_leistung = messpannung * strom_A
         momt_leistung = int(momt_leistung)
-
-        # Gesamtleistung aufsummieren
-        ges_leistung = momt_leistung / 1000 + ges_leistung 
-        ges_leistung = round(ges_leistung, 2)
         
     else:
         # Fehlerbehandlung, Texte werden auf den Bildschirm angezeigt
@@ -522,7 +520,8 @@ if wlan.isconnected() and mqttpb_verbunden and mqttsb_verbunden:
 
 #=====Hauptschleife=====#
 while mqttpb_verbunden and mqttsb_verbunden:
-    
+
+"""Auswertung und Messung der Sensordaten """
     # Aktuelle Zeit wird gemessen für die Messintervalle der Sensoren
     mess_umwelt_now = time.ticks_ms()
     mess_strom_now = time.ticks_ms()
@@ -559,18 +558,28 @@ while mqttpb_verbunden and mqttsb_verbunden:
         
         # In einen Takt von 1 Sekunde wird gemessen
         if time.ticks_diff(mess_strom_now, mess_strom_last) >= mess_strom_intervall:
+            betriebszahler += 1 # Betriebszähler vom Heizstrahler zur Berechnung des Verbrauchs
             print("Strom-Messung gestartet")
             mess_strom_last = mess_strom_now
+            
             # Funktion zur Messung des Stroms und Berechnung der Leistung
             messungacs712()
             print("Strom-Messung beendet")
     
-    # Wenn der Heizstrahler ist ausgeschaltet wird der Wert auf 0 gesetzt
+    # Wenn der Heizstrahler ist ausgeschaltet wird:
     elif strahlerfeedback == 0:
-        momt_leistung = 0
+        betriebszahler = betriebszahler / 3600 # Umrechnung von Sekunden auf Stunden
         
-    # Frostschutz
-    """ Automatisches Ein- und Ausschalten des Heizstrahlers zur Aufrechterhaltung einer konstanten Raumtemperatur """
+        # Berechnung des Verbrauchs in kWh
+        teil_verbrauch = (momt_leistung / 1000 ) * betriebszahler
+        ges_verbrauch += teil_verbrauch
+        
+        #Leistung wird zurückgesetzt
+        momt_leistung = 0
+
+#-------------------------------------------------------------------------------------------------------------#
+"""Frostschutz-Funktion
+Automatisches Ein- und Ausschalten des Heizstrahlers zur Aufrechterhaltung einer konstanten Raumtemperatur """
     
     # Frostschutz wird nur ausgeführt wenn es ein Integer ist. Sollte es ein String sein hat der Sensor ein Fehler
     # Der Schwellwert muss immer kleiner sein als der Ausschaltwert
@@ -605,7 +614,9 @@ while mqttpb_verbunden and mqttsb_verbunden:
             
         elif frostschutzfeedback == 1:
             frostschutzfeedbackstring = "Aktiv" #Bei aktivem Frostschutz
-            
+
+#-------------------------------------------------------------------------------------------------------------#
+"""Daten an den MQTT-Broker senden"""
     #Sensordaten in JSON-Fomart schreiben
     sensordaten_neu = {
         "Temperatur": raumtemperatur,
@@ -613,7 +624,7 @@ while mqttpb_verbunden and mqttsb_verbunden:
         "CO2_Wert": co2_wert,
         "TVOC_Wert": tvoc_wert,
         "Momentane_Leistung": momt_leistung,
-        "Gesamte_Leistung": ges_leistung
+        "Gesamte_Leistung": ges_verbrauch
         }
     
     #Feedback vom Strahler in JSON-Fomart schreiben
@@ -651,7 +662,7 @@ while mqttpb_verbunden and mqttsb_verbunden:
     
         # Gesamte Leistung
         txt.fill_rect(167, 155, 100, 15, st7789.BLACK)
-        txt.text(font, f"{ges_leistung} kW", 167, 155, st7789.CYAN, st7789.BLACK)
+        txt.text(font, f"{ges_verbrauch} kWh", 167, 155, st7789.CYAN, st7789.BLACK)
         
         # Daten werden zum Broker gesendet
         publish_senden("Raum/Sensorwerte", sensordaten_neu)
@@ -668,7 +679,9 @@ while mqttpb_verbunden and mqttsb_verbunden:
         
         # Daten werden zum Broker gesendet
         publish_senden("Raum/Feedback", feedbackdaten_neu)
-        
+
+#-------------------------------------------------------------------------------------------------------------#
+"""Daten vom Broker empfangen"""
     # Nach neuen Nachrichten Abfragen
     if wlan.isconnected() and mqttsb_verbunden:
         try:
