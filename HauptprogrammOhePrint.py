@@ -1,14 +1,18 @@
 #Projekt: Smart Heizungssteuerung
 #Ersteller: Ch. Scheele
 #Erstellungsdatum: 25.03.2025
-#Letzte Änderung: 24.04.2025
-
+#Letzte Änderung: 29.04.2025
+#Programm Name: main (hauptprogramm)
+#Aufgabe: Messung und Auswertung der Sensordaten
+#		  Kommunikation mit den MQTT-Broker
+#		  Steuern des Heizstrahlers
 #=====Bibliotheken=====#
 from machine import Pin, PWM, SoftI2C, SoftSPI
 import time
 import json
 import network
 from umqtt.simple import MQTTClient
+from Start import wlan_ssid, wlan_passwort, broker_ip # Daten aus der der Start Datei ziehen
 from aht10 import AHT10  # Temperatur- und Luftfeuchtigkeitssensor
 import CCS811 # Luftqualitätssensor
 from ir_tx.nec import NEC # IR-Transmitter
@@ -16,8 +20,19 @@ import st7789py as st7789 #Bildschirm-Bibliothek
 import vga1_8x16 as font #Bildschirm Font
 #======================#
 
-#=====Bildschirm-Infos=====#
+#=====Hardware Informationen=====#
 #ESP32-S3
+
+#I2C
+#SCL = Pin 1
+#SDA = Pin 2
+
+#DeboSens20A
+#ADC = Pin 4
+
+#KY-005
+#Signal (S) = Pin 5
+
 #Bildschirm Belegung
 #ST7789V3
 #SCK = Pin 42
@@ -26,7 +41,7 @@ import vga1_8x16 as font #Bildschirm Font
 #Reset = Pin 40
 #CS = Pin 39
 #dc = Pin 38
-#==========================#
+#================================#
 
 #=====Pins definieren=====#
 # I2C-Pins definieren:
@@ -84,7 +99,8 @@ co2_list = []
 tvoc_list = []
 strom_list = []
 momt_leistung = 0
-ges_leistung = 0
+ges_verbrauch = 0
+teil_verbrauch = 0
 neu_strahlersteuerung = 0
 alt_strahlersteuerung = 0
 strahlerfeedback = 0
@@ -96,6 +112,7 @@ feedbackdaten_alt = {}
 feedbackdaten_neu = {}
 sensordaten_alt = {}
 sensordaten_neu = {}
+betriebszahler = 0
 #=============================#
 
 #=====Einstellungen=====#
@@ -114,13 +131,13 @@ mess_umwelt_intervall = 30000 # in ms, entspricht 30s
 mess_strom_intervall = 1000 # in ms, entspricht 1s
 
 # WLAN-Daten
-ssid = "FRITZ!Box 7590 BC" #Änderung bei Netzwerkänderung
-password = "97792656499411616203" #Änderung bei Netzwerkänderung
-max_versuche = 300 #Wie viel fehlgeschlagene Versuche soll es geben bis er abbricht. 300 Versuche entsprichen 5 Minuten
+ssid = wlan_ssid # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
+password = wlan_passwort # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
+max_versuche = 60 #Wie viel fehlgeschlagene Versuche soll es geben bis er abbricht. 60 Versuche entsprichen 1 Minuten
 
 #MQTT-Publish-Einstellungen
 pb_client_id = "mqttx_b1dee7e5"
-pb_broker_ip = "192.168.178.56" #Änderung bei Netzwerkänderung
+pb_broker_ip = broker_ip # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
 pb_port = 1883
 pb_user = "ChSch"
 pb_password = "12345678"
@@ -212,7 +229,7 @@ def messungccs811():
 #-------------------------------------------#
 def messungacs712():
     """Messung des Stroms des Heizstrahlers und Umrechnung in Watt """
-    global momt_leistung, ges_leistung
+    global momt_leistung
     try:
         strom_list.clear()
         
@@ -231,20 +248,14 @@ def messungacs712():
         strom_A = (strom_in_mv - ACS_offset) / mV_per_A
 
     except Exception as e:
-        # Fehlerbehandlung, Texte werden auf den Bildschirm angezeigt
+         # Fehlerbehandlung, Texte werden auf den Bildschirm angezeigt
         strom_A = "Fehler"
-         
-        
         
     # Berechnung wird nur ausgeführt falls kein Fehler vorliegt
     if strom_A != "Fehler":
         # Momentanleistung berechnen
         momt_leistung = messpannung * strom_A
         momt_leistung = int(momt_leistung)
-
-        # Gesamtleistung aufsummieren
-        ges_leistung = momt_leistung / 1000 + ges_leistung 
-        ges_leistung = round(ges_leistung, 2)
         
     else:
         # Fehlerbehandlung, Texte werden auf den Bildschirm angezeigt
@@ -347,12 +358,10 @@ def wifi_verbindung():
 
     # Wenn Wlan verbunden ist, wird die Netzwerkonfiguration ausgegeben
     if wlan.isconnected():
-        pass
-        #print("WLAN verbunden!")
-        #print("Netzwerk-Konfiguration:", wlan.ifconfig())
 
     else:
         # Wenn die Verbindung nicht erfolgreich war, Fehlernachricht anzeigen
+        
         # Anzeige des Fehlertexts
         txt.fill(st7789.BLACK)
         
@@ -450,7 +459,6 @@ if wlan.isconnected():
         # Der Wert wird auf True gesetzt, wenn der Test erfolgreich war. Nur bei einem erfolgreichen Test kann die Hauptschleife gestartet werden.
         mqttsb_verbunden = True
         
-        
     except Exception as e:
         # Anzeige des Fehlertexts
         txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
@@ -491,7 +499,8 @@ if wlan.isconnected() and mqttpb_verbunden and mqttsb_verbunden:
 
 #=====Hauptschleife=====#
 while mqttpb_verbunden and mqttsb_verbunden:
-    
+
+"""Auswertung und Messung der Sensordaten """
     # Aktuelle Zeit wird gemessen für die Messintervalle der Sensoren
     mess_umwelt_now = time.ticks_ms()
     mess_strom_now = time.ticks_ms()
@@ -512,7 +521,8 @@ while mqttpb_verbunden and mqttsb_verbunden:
                     
                     # Umweltdaten einspeisen um Messwerte zu verbessern.
                     sensorccs811.put_envdata(luftfeuchtigkeit, raumtemperatur)
-                
+                    
+            # Funktion zum Messen der Luftqualität 
             messungccs811()
             
         except Exception as e:
@@ -525,18 +535,30 @@ while mqttpb_verbunden and mqttsb_verbunden:
         
         # In einen Takt von 1 Sekunde wird gemessen
         if time.ticks_diff(mess_strom_now, mess_strom_last) >= mess_strom_intervall:
+            betriebszahler += 1 # Betriebszähler vom Heizstrahler zur Berechnung des Verbrauchs
             
             mess_strom_last = mess_strom_now
+            
             # Funktion zur Messung des Stroms und Berechnung der Leistung
             messungacs712()
     
-    # Wenn der Heizstrahler ist ausgeschaltet wird der Wert auf 0 gesetzt
+    # Wenn der Heizstrahler ist ausgeschaltet wird:
     elif strahlerfeedback == 0:
-        momt_leistung = 0
+        betriebszahler = betriebszahler / 3600 # Umrechnung von Sekunden auf Stunden
         
-    # Frostschutz
-    """ Automatisches Ein- und Ausschalten des Heizstrahlers zur Aufrechterhaltung einer konstanten Raumtemperatur """
+        # Berechnung des Verbrauchs in kWh
+        teil_verbrauch = (momt_leistung / 1000 ) * betriebszahler
+        ges_verbrauch += teil_verbrauch
+        ges_verbrauch = int(ges_verbrauch)
+        
+        #Leistung wird zurückgesetzt
+        momt_leistung = 0
+
+#-------------------------------------------------------------------------------------------------------------#
+"""Frostschutz-Funktion
+Automatisches Ein- und Ausschalten des Heizstrahlers zur Aufrechterhaltung einer konstanten Raumtemperatur """
     
+    # Frostschutz wird nur ausgeführt wenn es ein Integer ist. Sollte es ein String sein hat der Sensor ein Fehler
     # Der Schwellwert muss immer kleiner sein als der Ausschaltwert
     if isinstance(raumtemperatur, int) and frostschutzschwellwert < frostschutzaus:
         
@@ -569,7 +591,9 @@ while mqttpb_verbunden and mqttsb_verbunden:
             
         elif frostschutzfeedback == 1:
             frostschutzfeedbackstring = "Aktiv" #Bei aktivem Frostschutz
-            
+
+#-------------------------------------------------------------------------------------------------------------#
+"""Daten an den MQTT-Broker senden"""
     #Sensordaten in JSON-Fomart schreiben
     sensordaten_neu = {
         "Temperatur": raumtemperatur,
@@ -577,7 +601,7 @@ while mqttpb_verbunden and mqttsb_verbunden:
         "CO2_Wert": co2_wert,
         "TVOC_Wert": tvoc_wert,
         "Momentane_Leistung": momt_leistung,
-        "Gesamte_Leistung": ges_leistung
+        "Gesamte_Leistung": ges_verbrauch
         }
     
     #Feedback vom Strahler in JSON-Fomart schreiben
@@ -615,7 +639,7 @@ while mqttpb_verbunden and mqttsb_verbunden:
     
         # Gesamte Leistung
         txt.fill_rect(167, 155, 100, 15, st7789.BLACK)
-        txt.text(font, f"{ges_leistung} kW", 167, 155, st7789.CYAN, st7789.BLACK)
+        txt.text(font, f"{ges_verbrauch} kWh", 167, 155, st7789.CYAN, st7789.BLACK)
         
         # Daten werden zum Broker gesendet
         publish_senden("Raum/Sensorwerte", sensordaten_neu)
@@ -632,7 +656,9 @@ while mqttpb_verbunden and mqttsb_verbunden:
         
         # Daten werden zum Broker gesendet
         publish_senden("Raum/Feedback", feedbackdaten_neu)
-        
+
+#-------------------------------------------------------------------------------------------------------------#
+"""Daten vom Broker empfangen"""
     # Nach neuen Nachrichten Abfragen
     if wlan.isconnected() and mqttsb_verbunden:
         try:
@@ -640,14 +666,12 @@ while mqttpb_verbunden and mqttsb_verbunden:
         
         except OSError as e:
             # Fehlerbehandlung bei Netzwerkfehler
-
             try:
                 # Überprüfen ob eine Verbindung zum Wlan Netzwerkvorhanden ist
                 if not wlan.isconnected():
-                    wifi_verbindung()
+                    wifi_verbindung() # Wlan-Verbindung wieder herstellen, sollte keine da sein
                 
                 # Versuchen sich wieder mit den Broker zu verbinden
-
                 # Reconntecten und Subscriben
                 subscribe_client.connect()
                 subscribe_client.subscribe(subscribe_MQTT_TOPIC_1) #Topic Steuerung/Stufen
@@ -670,6 +694,8 @@ while mqttpb_verbunden and mqttsb_verbunden:
                 mqttsb_verbunden = False
         
         except Exception as e:
+            # Fehlernachricht falls das Reconnecten nicht funktioniert
+            
             # Anzeige des Fehler Textes
             txt.fill(st7789.BLACK)
             txt.text(font, "Fehler beim Verbinden mit", 60, 132, st7789.CYAN, st7789.BLACK)
@@ -678,7 +704,8 @@ while mqttpb_verbunden and mqttsb_verbunden:
             
             # Der Wert wird auf False gesetzt um die Hauptschleife kontrolliert zu beenden
             mqttsb_verbunden = False
+            
+# Verlassen der Hauptschleife
 
 # Bei Beendigung der Schleife wird folgendes auf den Bildschirm angezeigt
 txt.text(font, "Hauptschleife beendet", 80, 40, st7789.CYAN, st7789.BLACK)
-

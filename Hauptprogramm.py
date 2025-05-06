@@ -543,7 +543,8 @@ while mqttpb_verbunden and mqttsb_verbunden:
                     
                     # Umweltdaten einspeisen um Messwerte zu verbessern.
                     sensorccs811.put_envdata(luftfeuchtigkeit, raumtemperatur)
-                
+            
+            # Funktion zur Messung der Luftqualität
             messungccs811()
             print("Umwelt-Messung beendet")
             
@@ -573,6 +574,7 @@ while mqttpb_verbunden and mqttsb_verbunden:
         # Berechnung des Verbrauchs in kWh
         teil_verbrauch = (momt_leistung / 1000 ) * betriebszahler
         ges_verbrauch += teil_verbrauch
+        ges_verbrauch = int(ges_verbrauch)
         
         #Leistung wird zurückgesetzt
         momt_leistung = 0
@@ -694,9 +696,8 @@ Automatisches Ein- und Ausschalten des Heizstrahlers zur Aufrechterhaltung einer
                 # Überprüfen ob eine Verbindung zum Wlan Netzwerkvorhanden ist
                 if not wlan.isconnected():
                     print("Versuchen sich wieder mit den Wlan zu verbinden")
-                    wifi_verbindung()
+                    wifi_verbindung() # Wlan-Verbindung wieder herstellen, sollte keine da sein
                 
-                # Versuchen sich wieder mit den Broker zu verbinden
                 print("Versuchen sich wieder mit den Subscribe Broker zu verbinden")
                 
                 # Reconntecten und Subscriben
