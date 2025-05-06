@@ -31,9 +31,6 @@ ap.config(essid="Smart-ESP32S3", authmode=network.AUTH_OPEN)
 while not ap.active():
     pass
 
-print('Access Point aktiv')
-print(ap.ifconfig())
-
 #==================================#
 
 #===== HTML-Webseite =====#
@@ -104,7 +101,6 @@ ini_server.listen(5)
 while True:
     # Auf eingehende Verbindung warten
     conn, addr = ini_server.accept()
-    print("Verbindung von", addr)
     
     # HTTP-Request vom Client empfangen
     request = conn.recv(1024)
@@ -116,7 +112,6 @@ while True:
         
         # Den Dateninhalt(Body) aus der HTTP-Nachricht extrahieren
         body = request_str.split('\r\n\r\n', 1)[1]  # Nach Header kommt der Body
-        print("Body:", body)
         
         # Dateninhalt in Schlüssel-Werte-Paare aufteilen und in einen Dictionary speichern
         
@@ -170,4 +165,3 @@ time.sleep(2)
 # Access Point deaktivieren
 ap.active(False)
 time.sleep(2)
-print("Initialisierungsprogramm beendet")

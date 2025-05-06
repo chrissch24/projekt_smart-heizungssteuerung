@@ -7,7 +7,7 @@
 #		  Kommunikation mit den MQTT-Broker
 #		  Steuern des Heizstrahlers
 #=====Bibliotheken=====#
-from machine import Pin, PWM, SoftI2C, SoftSPI
+from machine import Pin, PWM, SoftI2C, SoftSPI, ADC
 import time
 import json
 import network
@@ -48,8 +48,8 @@ import vga1_8x16 as font #Bildschirm Font
 i2c = SoftI2C(scl=Pin(1), sda=Pin(2))
 
 # ACS712-Stromsensor
-#strom_sensor = ADC(Pin(4))
-#strom_sensor.atten(ADC.ATTN_11DB)  # 0-3.3V Bereich
+strom_sensor = ADC(Pin(4))
+strom_sensor.atten(ADC.ATTN_11DB)  # 0-3.3V Bereich
 
 # IR-Transmitter
 ir_tx = NEC(Pin(5, Pin.OUT))
@@ -235,8 +235,7 @@ def messungacs712():
         
         # Messwerte auslesen
         for i in range(messloops):
-            #strom_list.append(strom_sensor.read())
-            strom_list.append(4000)
+            strom_list.append(strom_sensor.read())
 
         # Mittelwertfilter anwenden
         mess_strom = messfilter(strom_list)
@@ -257,6 +256,9 @@ def messungacs712():
         momt_leistung = messpannung * strom_A
         momt_leistung = int(momt_leistung)
         
+        # Bei negativen Zahlen, sollte ein Fehler beim Stromsensor sein
+        if momt_leistung < 0:
+            momt_leistung = 0
     else:
         # Fehlerbehandlung, Texte werden auf den Bildschirm angezeigt
         momt_leistung = "Fehler"
@@ -359,10 +361,11 @@ def wifi_verbindung():
     # Wenn Wlan verbunden ist, wird die Netzwerkonfiguration ausgegeben
     if wlan.isconnected():
         pass
+        #print("WLAN verbunden!")
+        #print("Netzwerk-Konfiguration:", wlan.ifconfig())
 
     else:
         # Wenn die Verbindung nicht erfolgreich war, Fehlernachricht anzeigen
-        
         # Anzeige des Fehlertexts
         txt.fill(st7789.BLACK)
         
@@ -460,6 +463,7 @@ if wlan.isconnected():
         # Der Wert wird auf True gesetzt, wenn der Test erfolgreich war. Nur bei einem erfolgreichen Test kann die Hauptschleife gestartet werden.
         mqttsb_verbunden = True
         
+        
     except Exception as e:
         # Anzeige des Fehlertexts
         txt.fill_rect(72, 109, 170, 15, st7789.BLACK)
@@ -523,8 +527,8 @@ while mqttpb_verbunden and mqttsb_verbunden:
                     
                     # Umweltdaten einspeisen um Messwerte zu verbessern.
                     sensorccs811.put_envdata(luftfeuchtigkeit, raumtemperatur)
-                    
-            # Funktion zum Messen der Luftqualität 
+            
+            # Funktion zur Messung der Luftqualität
             messungccs811()
             
         except Exception as e:
@@ -538,23 +542,21 @@ while mqttpb_verbunden and mqttsb_verbunden:
         # In einen Takt von 1 Sekunde wird gemessen
         if time.ticks_diff(mess_strom_now, mess_strom_last) >= mess_strom_intervall:
             betriebszahler += 1 # Betriebszähler vom Heizstrahler zur Berechnung des Verbrauchs
-            
             mess_strom_last = mess_strom_now
             
             # Funktion zur Messung des Stroms und Berechnung der Leistung
             messungacs712()
-    
-    # Wenn der Heizstrahler ist ausgeschaltet wird:
-    elif strahlerfeedback == 0:
+
+    # Wenn der Heizstrahler ist ausgeschaltet wird, wird die verbrauchte Leistung berechnet
+    elif strahlerfeedback == 0 and momt_leistung != 0:
         betriebszahler = betriebszahler / 3600 # Umrechnung von Sekunden auf Stunden
+        teil_verbrauch = (momt_leistung / 1000 ) * betriebszahler # Berechnung der Leistung in kWh
+        ges_verbrauch = round((teil_verbrauch + ges_verbrauch),2 ) # Teil Verbrauch zum gesamten Verbrauch addieren und runden
         
-        # Berechnung des Verbrauchs in kWh
-        teil_verbrauch = (momt_leistung / 1000 ) * betriebszahler
-        ges_verbrauch += teil_verbrauch
-        ges_verbrauch = int(ges_verbrauch)
-        
-        #Leistung wird zurückgesetzt
+        # Werte werden zurückgesetzt
         momt_leistung = 0
+        teil_verbrauch = 0
+        betriebszahler = 0
 
 #-------------------------------------------------------------------------------------------------------------#
 # Frostschutz-Funktion
@@ -596,6 +598,7 @@ while mqttpb_verbunden and mqttsb_verbunden:
 
 #-------------------------------------------------------------------------------------------------------------#
 # Daten an den MQTT-Broker senden
+
     #Sensordaten in JSON-Fomart schreiben
     sensordaten_neu = {
         "Temperatur": raumtemperatur,
@@ -661,6 +664,7 @@ while mqttpb_verbunden and mqttsb_verbunden:
 
 #-------------------------------------------------------------------------------------------------------------#
 # Daten vom Broker empfangen
+
     # Nach neuen Nachrichten Abfragen
     if wlan.isconnected() and mqttsb_verbunden:
         try:
@@ -668,12 +672,13 @@ while mqttpb_verbunden and mqttsb_verbunden:
         
         except OSError as e:
             # Fehlerbehandlung bei Netzwerkfehler
+            
             try:
                 # Überprüfen ob eine Verbindung zum Wlan Netzwerkvorhanden ist
                 if not wlan.isconnected():
                     wifi_verbindung() # Wlan-Verbindung wieder herstellen, sollte keine da sein
                 
-                # Versuchen sich wieder mit den Broker zu verbinden
+                
                 # Reconntecten und Subscriben
                 subscribe_client.connect()
                 subscribe_client.subscribe(subscribe_MQTT_TOPIC_1) #Topic Steuerung/Stufen
@@ -696,7 +701,6 @@ while mqttpb_verbunden and mqttsb_verbunden:
                 mqttsb_verbunden = False
         
         except Exception as e:
-            # Fehlernachricht falls das Reconnecten nicht funktioniert
             
             # Anzeige des Fehler Textes
             txt.fill(st7789.BLACK)

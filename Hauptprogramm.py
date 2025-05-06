@@ -7,12 +7,12 @@
 #		  Kommunikation mit den MQTT-Broker
 #		  Steuern des Heizstrahlers
 #=====Bibliotheken=====#
-from machine import Pin, PWM, SoftI2C, SoftSPI
+from machine import Pin, PWM, SoftI2C, SoftSPI, ADC
 import time
 import json
 import network
 from umqtt.simple import MQTTClient
-#from Start import wlan_ssid, wlan_passwort, broker_ip # Daten aus der der Start Datei ziehen
+from Start import wlan_ssid, wlan_passwort, broker_ip # Daten aus der der Start Datei ziehen
 from aht10 import AHT10  # Temperatur- und Luftfeuchtigkeitssensor
 import CCS811 # Luftqualitätssensor
 from ir_tx.nec import NEC # IR-Transmitter
@@ -48,8 +48,8 @@ import vga1_8x16 as font #Bildschirm Font
 i2c = SoftI2C(scl=Pin(1), sda=Pin(2))
 
 # ACS712-Stromsensor
-#strom_sensor = ADC(Pin(4))
-#strom_sensor.atten(ADC.ATTN_11DB)  # 0-3.3V Bereich
+strom_sensor = ADC(Pin(4))
+strom_sensor.atten(ADC.ATTN_11DB)  # 0-3.3V Bereich
 
 # IR-Transmitter
 ir_tx = NEC(Pin(5, Pin.OUT))
@@ -131,13 +131,13 @@ mess_umwelt_intervall = 30000 # in ms, entspricht 30s
 mess_strom_intervall = 1000 # in ms, entspricht 1s
 
 # WLAN-Daten
-ssid = "BZTG-IoT"#wlan_ssid # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
-password = "WerderBremen24"#wlan_passwort # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
+ssid = wlan_ssid # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
+password = wlan_passwort # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
 max_versuche = 60 #Wie viel fehlgeschlagene Versuche soll es geben bis er abbricht. 60 Versuche entsprichen 1 Minuten
 
 #MQTT-Publish-Einstellungen
 pb_client_id = "mqttx_b1dee7e5"
-pb_broker_ip = "192.168.1.176"#broker_ip # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
+pb_broker_ip = broker_ip # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
 pb_port = 1883
 pb_user = "ChSch"
 pb_password = "12345678"
@@ -237,8 +237,7 @@ def messungacs712():
         
         # Messwerte auslesen
         for i in range(messloops):
-            #strom_list.append(strom_sensor.read())
-            strom_list.append(50000) # Zur Test Zwecken manuell eingetragen
+            strom_list.append(strom_sensor.read())
 
         # Mittelwertfilter anwenden
         mess_strom = messfilter(strom_list)
@@ -260,6 +259,9 @@ def messungacs712():
         momt_leistung = messpannung * strom_A
         momt_leistung = int(momt_leistung)
         
+        # Bei negativen Zahlen, sollte ein Fehler beim Stromsensor sein
+        if momt_leistung < 0:
+            momt_leistung = 0
     else:
         # Fehlerbehandlung, Texte werden auf den Bildschirm angezeigt
         momt_leistung = "Fehler"
