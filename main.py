@@ -358,6 +358,7 @@ def wifi_verbindung():
 
     # Wenn Wlan verbunden ist, wird die Netzwerkonfiguration ausgegeben
     if wlan.isconnected():
+        pass
 
     else:
         # Wenn die Verbindung nicht erfolgreich war, Fehlernachricht anzeigen
@@ -500,7 +501,8 @@ if wlan.isconnected() and mqttpb_verbunden and mqttsb_verbunden:
 #=====Hauptschleife=====#
 while mqttpb_verbunden and mqttsb_verbunden:
 
-"""Auswertung und Messung der Sensordaten """
+# Auswertung und Messung der Sensordaten
+
     # Aktuelle Zeit wird gemessen für die Messintervalle der Sensoren
     mess_umwelt_now = time.ticks_ms()
     mess_strom_now = time.ticks_ms()
@@ -555,8 +557,8 @@ while mqttpb_verbunden and mqttsb_verbunden:
         momt_leistung = 0
 
 #-------------------------------------------------------------------------------------------------------------#
-"""Frostschutz-Funktion
-Automatisches Ein- und Ausschalten des Heizstrahlers zur Aufrechterhaltung einer konstanten Raumtemperatur """
+# Frostschutz-Funktion
+# Automatisches Ein- und Ausschalten des Heizstrahlers zur Aufrechterhaltung einer konstanten Raumtemperatur
     
     # Frostschutz wird nur ausgeführt wenn es ein Integer ist. Sollte es ein String sein hat der Sensor ein Fehler
     # Der Schwellwert muss immer kleiner sein als der Ausschaltwert
@@ -593,7 +595,7 @@ Automatisches Ein- und Ausschalten des Heizstrahlers zur Aufrechterhaltung einer
             frostschutzfeedbackstring = "Aktiv" #Bei aktivem Frostschutz
 
 #-------------------------------------------------------------------------------------------------------------#
-"""Daten an den MQTT-Broker senden"""
+# Daten an den MQTT-Broker senden
     #Sensordaten in JSON-Fomart schreiben
     sensordaten_neu = {
         "Temperatur": raumtemperatur,
@@ -658,7 +660,7 @@ Automatisches Ein- und Ausschalten des Heizstrahlers zur Aufrechterhaltung einer
         publish_senden("Raum/Feedback", feedbackdaten_neu)
 
 #-------------------------------------------------------------------------------------------------------------#
-"""Daten vom Broker empfangen"""
+# Daten vom Broker empfangen
     # Nach neuen Nachrichten Abfragen
     if wlan.isconnected() and mqttsb_verbunden:
         try:

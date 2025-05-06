@@ -12,7 +12,7 @@ import time
 import json
 import network
 from umqtt.simple import MQTTClient
-from Start import wlan_ssid, wlan_passwort, broker_ip # Daten aus der der Start Datei ziehen
+#from Start import wlan_ssid, wlan_passwort, broker_ip # Daten aus der der Start Datei ziehen
 from aht10 import AHT10  # Temperatur- und Luftfeuchtigkeitssensor
 import CCS811 # Luftqualitätssensor
 from ir_tx.nec import NEC # IR-Transmitter
@@ -131,13 +131,13 @@ mess_umwelt_intervall = 30000 # in ms, entspricht 30s
 mess_strom_intervall = 1000 # in ms, entspricht 1s
 
 # WLAN-Daten
-ssid = wlan_ssid # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
-password = wlan_passwort # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
+ssid = "BZTG-IoT"#wlan_ssid # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
+password = "WerderBremen24"#wlan_passwort # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
 max_versuche = 60 #Wie viel fehlgeschlagene Versuche soll es geben bis er abbricht. 60 Versuche entsprichen 1 Minuten
 
 #MQTT-Publish-Einstellungen
 pb_client_id = "mqttx_b1dee7e5"
-pb_broker_ip = broker_ip # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
+pb_broker_ip = "192.168.1.176"#broker_ip # Variabel kommt von der "Start-Datei". Wert wird vom Nutzer festgelegt
 pb_port = 1883
 pb_user = "ChSch"
 pb_password = "12345678"
@@ -238,7 +238,7 @@ def messungacs712():
         # Messwerte auslesen
         for i in range(messloops):
             #strom_list.append(strom_sensor.read())
-            strom_list.append(4000)
+            strom_list.append(50000) # Zur Test Zwecken manuell eingetragen
 
         # Mittelwertfilter anwenden
         mess_strom = messfilter(strom_list)
@@ -521,7 +521,8 @@ if wlan.isconnected() and mqttpb_verbunden and mqttsb_verbunden:
 #=====Hauptschleife=====#
 while mqttpb_verbunden and mqttsb_verbunden:
 
-"""Auswertung und Messung der Sensordaten """
+# Auswertung und Messung der Sensordaten
+
     # Aktuelle Zeit wird gemessen für die Messintervalle der Sensoren
     mess_umwelt_now = time.ticks_ms()
     mess_strom_now = time.ticks_ms()
@@ -567,21 +568,20 @@ while mqttpb_verbunden and mqttsb_verbunden:
             messungacs712()
             print("Strom-Messung beendet")
     
-    # Wenn der Heizstrahler ist ausgeschaltet wird:
-    elif strahlerfeedback == 0:
+    # Wenn der Heizstrahler ist ausgeschaltet wird, wird die verbrauchte Leistung berechnet
+    elif strahlerfeedback == 0 and momt_leistung != 0:
         betriebszahler = betriebszahler / 3600 # Umrechnung von Sekunden auf Stunden
+        teil_verbrauch = (momt_leistung / 1000 ) * betriebszahler # Berechnung der Leistung in kWh
+        ges_verbrauch = round((teil_verbrauch + ges_verbrauch),2 ) # Teil Verbrauch zum gesamten Verbrauch addieren und runden
         
-        # Berechnung des Verbrauchs in kWh
-        teil_verbrauch = (momt_leistung / 1000 ) * betriebszahler
-        ges_verbrauch += teil_verbrauch
-        ges_verbrauch = int(ges_verbrauch)
-        
-        #Leistung wird zurückgesetzt
+        # Werte werden zurückgesetzt
         momt_leistung = 0
+        teil_verbrauch = 0
+        betriebszahler = 0
 
 #-------------------------------------------------------------------------------------------------------------#
-"""Frostschutz-Funktion
-Automatisches Ein- und Ausschalten des Heizstrahlers zur Aufrechterhaltung einer konstanten Raumtemperatur """
+# Frostschutz-Funktion
+# Automatisches Ein- und Ausschalten des Heizstrahlers zur Aufrechterhaltung einer konstanten Raumtemperatur
     
     # Frostschutz wird nur ausgeführt wenn es ein Integer ist. Sollte es ein String sein hat der Sensor ein Fehler
     # Der Schwellwert muss immer kleiner sein als der Ausschaltwert
@@ -618,7 +618,8 @@ Automatisches Ein- und Ausschalten des Heizstrahlers zur Aufrechterhaltung einer
             frostschutzfeedbackstring = "Aktiv" #Bei aktivem Frostschutz
 
 #-------------------------------------------------------------------------------------------------------------#
-"""Daten an den MQTT-Broker senden"""
+# Daten an den MQTT-Broker senden
+
     #Sensordaten in JSON-Fomart schreiben
     sensordaten_neu = {
         "Temperatur": raumtemperatur,
@@ -683,7 +684,8 @@ Automatisches Ein- und Ausschalten des Heizstrahlers zur Aufrechterhaltung einer
         publish_senden("Raum/Feedback", feedbackdaten_neu)
 
 #-------------------------------------------------------------------------------------------------------------#
-"""Daten vom Broker empfangen"""
+# Daten vom Broker empfangen
+
     # Nach neuen Nachrichten Abfragen
     if wlan.isconnected() and mqttsb_verbunden:
         try:
