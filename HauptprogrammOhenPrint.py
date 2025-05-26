@@ -170,9 +170,7 @@ ir_code = 0x1a # IR Code grundstellung ist immer auf Aus
 #=====Funktionen=====#
 def messfilter(messwerte):
     """Filtern von Messwerten, um Ausreißer zu entfernen"""
-    if len(messwerte) < 3:  # Sicherheit, um Fehler zu vermeiden
-        return sum(messwerte) / len(messwerte) if messwerte else 0
-    
+    if len(messwerte) < 3:  # Sicherheit, um Fehler zu vermeiden    
     messwerte.sort()  # Werte sortieren
     messwerte.pop(0)  # Kleinster Wert entfernen
     messwerte.pop()   # Größter Wert entfernen
